@@ -57,6 +57,13 @@ export interface RuntimeReadyMessage {
   appName?: string;
   reactVersion?: string;
   appUrl?: string;
+  /** 'web' | 'ios' | 'android'. Populated by the adapter. Desktop uses it for badges
+   *  and to disambiguate multi-app sessions (one iOS + one Android from the same monorepo). */
+  platform?: 'web' | 'ios' | 'android';
+  /** Stable app identifier. Pairs with platform to disambiguate simultaneous clients. */
+  appId?: string;
+  /** App version — shown in the desktop connection panel for diagnostic purposes. */
+  appVersion?: string;
 }
 
 export interface RuntimeRenderMessage {
@@ -796,13 +803,34 @@ export interface FloTraceConfig {
    *  Web adapter passes `() => window.location.href`; native adapters pass undefined
    *  (no browser URL on React Native). */
   getAppUrl?: () => string | undefined;
+  /** Runtime platform — set by adapters. Web passes 'web'; native derives from `Platform.OS`.
+   *  Surfaced on `runtime:ready` so the desktop can badge nodes + disambiguate multi-app sessions. */
+  platform?: 'web' | 'ios' | 'android';
+  /** Stable app identifier. Used by the desktop to disambiguate simultaneously-connected
+   *  clients (e.g., one iOS + one Android from the same monorepo). */
+  appId?: string;
+  /** App version — surfaced on `runtime:ready` for diagnostic display. */
+  appVersion?: string;
+  /** WebSocket host override. Native adapter sets this to the resolved Metro host
+   *  (e.g., "10.0.2.2" on Android emulator, LAN IP for physical devices).
+   *  Defaults to '127.0.0.1' when unset. */
+  host?: string;
+  /** LAN auth token for connections to `0.0.0.0`-bound desktop servers.
+   *  Ignored for loopback (`127.0.0.1`) connections. Paste from desktop Settings. */
+  authToken?: string;
 }
+
+/** Keys that stay optional in DEFAULT_CONFIG. These are populated by adapters (web/native)
+ *  at call-time — the default object should not pretend to know a platform or LAN token. */
+type OptionalConfigKeys = 'getAppUrl' | 'platform' | 'appId' | 'appVersion' | 'host' | 'authToken';
+
+export type ResolvedFloTraceConfig = Required<Omit<FloTraceConfig, OptionalConfigKeys>> &
+  Pick<FloTraceConfig, OptionalConfigKeys>;
 
 /**
  * Default configuration
  */
-export const DEFAULT_CONFIG: Required<Omit<FloTraceConfig, 'getAppUrl'>> &
-  Pick<FloTraceConfig, 'getAppUrl'> = {
+export const DEFAULT_CONFIG: ResolvedFloTraceConfig = {
   port: 3457,
   appName: 'React App',
   enabled:

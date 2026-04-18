@@ -13,6 +13,7 @@
 // Configuration & shared types
 export type {
   FloTraceConfig,
+  ResolvedFloTraceConfig,
   TrackingOptions,
   SerializedValue,
   LiveTreeNode,

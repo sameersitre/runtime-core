@@ -2,6 +2,7 @@ import type {
   RuntimeMessage,
   ExtensionToRuntimeMessage,
   FloTraceConfig,
+  ResolvedFloTraceConfig,
 } from './types';
 import { DEFAULT_CONFIG } from './types';
 
@@ -14,7 +15,7 @@ type ConnectionHandler = (connected: boolean) => void;
  */
 export class FloTraceWebSocketClient {
   private ws: WebSocket | null = null;
-  private config: Required<Omit<FloTraceConfig, 'getAppUrl'>> & Pick<FloTraceConfig, 'getAppUrl'>;
+  private config: ResolvedFloTraceConfig;
   private messageQueue: RuntimeMessage[] = [];
   private flushTimeout: ReturnType<typeof setTimeout> | null = null;
   private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -44,17 +45,23 @@ export class FloTraceWebSocketClient {
       return;
     }
 
-    // Only connect in browser environment
-    if (typeof window === 'undefined' || typeof WebSocket === 'undefined') {
-      console.log('[FloTrace] Not in browser environment, skipping connection');
+    // Require a WebSocket implementation — present in browsers and in React Native runtimes.
+    // (The native adapter relies on RN's built-in global WebSocket; no DOM is needed.)
+    if (typeof WebSocket === 'undefined') {
+      console.log('[FloTrace] WebSocket not available, skipping connection');
       return;
     }
 
     this.isConnecting = true;
 
     try {
-      const url = `ws://127.0.0.1:${this.config.port}`;
-      console.log(`[FloTrace] Connecting to ${url}...`);
+      const host = this.config.host ?? '127.0.0.1';
+      // LAN auth token rides in the query string — WebSocket browser API can't set custom
+      // request headers, and RN's fetch-polyfilled WebSocket is inconsistent about them too.
+      // The desktop server accepts either `?token=` or the `Sec-WebSocket-Protocol` header.
+      const tokenParam = this.config.authToken ? `?token=${encodeURIComponent(this.config.authToken)}` : '';
+      const url = `ws://${host}:${this.config.port}${tokenParam}`;
+      console.log(`[FloTrace] Connecting to ${url.replace(/token=[^&]+/, 'token=***')}...`);
 
       this.ws = new WebSocket(url);
 
@@ -70,6 +77,9 @@ export class FloTraceWebSocketClient {
           appName: this.config.appName,
           reactVersion: this.getReactVersion(),
           appUrl: this.config.getAppUrl?.(),
+          platform: this.config.platform,
+          appId: this.config.appId,
+          appVersion: this.config.appVersion,
         });
 
         // Flush any queued messages
@@ -292,15 +302,13 @@ export class FloTraceWebSocketClient {
    */
   private getReactVersion(): string | undefined {
     try {
-      // React exposes version on the React object
-      if (typeof window !== 'undefined') {
-        const React = (window as unknown as { React?: { version?: string } }).React;
-        return React?.version;
-      }
+      // React exposes version on globalThis.React (browser) or can be required synchronously
+      // in React Native. Use globalThis so this stays DOM-free.
+      const React = (globalThis as { React?: { version?: string } }).React;
+      return React?.version;
     } catch {
-      // Ignore errors
+      return undefined;
     }
-    return undefined;
   }
 }
 
