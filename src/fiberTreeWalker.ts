@@ -343,9 +343,32 @@ export interface FiberTreeWalkerOptions {
    * or lib/framework-only subtrees. Default: never prune.
    */
   pruneSubtree?: (node: LiveTreeNode) => boolean;
+  /**
+   * Extra component names treated as framework internals (merged with the built-in
+   * web list). Platforms use this to tag RN / React Navigation / Reanimated /
+   * Gesture Handler / Safe Area / FlashList wrappers without forking the walker.
+   */
+  frameworkComponentNames?: string[];
+  /**
+   * Extra path patterns treated as framework source (merged with the built-in
+   * web list). Checked against fiber._debugSource.fileName in dev mode.
+   */
+  frameworkPathPatterns?: RegExp[];
+  /**
+   * Host-node name prefixes to skip at the host-component layer (mirror of the
+   * DOM-element filter). React Native sets this to `["RCT"]` so native host
+   * views like `RCTView`/`RCTText` don't appear in the tree.
+   */
+  hostComponentSkipPrefixes?: string[];
 }
 
 let walkerOptions: FiberTreeWalkerOptions = {};
+// Merged name set / pattern list / prefix list — rebuilt when walker options change.
+// Initialized empty here; `installFiberTreeWalker` fills them so we avoid temporal
+// dead zone on the `FRAMEWORK_*` constants declared further down.
+let frameworkComponentNameSet: Set<string> = new Set();
+let frameworkPathPatternList: readonly RegExp[] = [];
+let hostComponentSkipPrefixList: readonly string[] = [];
 
 // Track which strategy is active
 let activeStrategy: "devtools" | "dom" | null = null;
@@ -441,6 +464,16 @@ function isUserComponent(fiber: Fiber): boolean {
   // (e.g., /workspace/packages/ui/src/Button.tsx), so they are NOT affected by this check.
   if (fiber._debugSource?.fileName?.includes("node_modules")) return false;
 
+  // Platform host-component prefix filter — mirrors the DOM-element skip on web.
+  // React Native leaks `RCTView`/`RCTScrollView`/etc. through as user-component-tag
+  // fibers; their children are already surfaced via the transparent-wrapper branch,
+  // so we drop the wrapper name itself from the tree.
+  if (hostComponentSkipPrefixList.length > 0) {
+    for (const prefix of hostComponentSkipPrefixList) {
+      if (name.startsWith(prefix)) return false;
+    }
+  }
+
   return true;
 }
 
@@ -513,13 +546,16 @@ const FRAMEWORK_PATH_PATTERNS: RegExp[] = [
 /**
  * Detect if a user-visible component is actually a framework/library wrapper.
  * Called only for fibers that already passed isUserComponent().
+ *
+ * Platform adapters can inject extra names/patterns via
+ * `installFiberTreeWalker({ frameworkComponentNames, frameworkPathPatterns })`.
  */
 function isFrameworkComponent(fiber: Fiber, name: string): boolean {
-  if (FRAMEWORK_COMPONENT_NAMES.has(name)) return true;
+  if (frameworkComponentNameSet.has(name)) return true;
 
   const filePath = fiber._debugSource?.fileName;
   if (filePath) {
-    for (const pattern of FRAMEWORK_PATH_PATTERNS) {
+    for (const pattern of frameworkPathPatternList) {
       if (pattern.test(filePath)) return true;
     }
   }
@@ -1411,6 +1447,15 @@ export function installFiberTreeWalker(
   walkerOptions = options;
   isInstalled = true;
 
+  // Merge built-in framework detection with platform-supplied extras.
+  frameworkComponentNameSet = options.frameworkComponentNames?.length
+    ? new Set<string>([...FRAMEWORK_COMPONENT_NAMES, ...options.frameworkComponentNames])
+    : FRAMEWORK_COMPONENT_NAMES;
+  frameworkPathPatternList = options.frameworkPathPatterns?.length
+    ? [...FRAMEWORK_PATH_PATTERNS, ...options.frameworkPathPatterns]
+    : FRAMEWORK_PATH_PATTERNS;
+  hostComponentSkipPrefixList = options.hostComponentSkipPrefixes ?? [];
+
   // Install RSC payload interceptor for Next.js App Router detection (best-effort)
   try {
     const client = getWebSocketClient();
@@ -1742,6 +1787,9 @@ export function uninstallFiberTreeWalker(): void {
   lastSnapshotSentTime = 0;
   isInstalled = false;
   walkerOptions = {};
+  frameworkComponentNameSet = new Set();
+  frameworkPathPatternList = [];
+  hostComponentSkipPrefixList = [];
   try { uninstallRscPayloadInterceptor(); } catch { /* non-fatal */ }
   clearActionStateCache();
   resetNextjsDetection();
