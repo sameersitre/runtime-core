@@ -829,11 +829,30 @@ export interface FloTraceConfig {
   /** LAN auth token for connections to `0.0.0.0`-bound desktop servers.
    *  Ignored for loopback (`127.0.0.1`) connections. Paste from desktop Settings. */
   authToken?: string;
+  /** **Experimental (runtime-native only).** Default-deny filter: a component is
+   *  treated as framework unless its fiber has positive source-path evidence
+   *  (`_debugSource`, owner-chain `_debugSource`, or `_debugStack` first non-react
+   *  frame) pointing outside `node_modules`. Eliminates most per-library
+   *  wrapper-name maintenance. Default: `true` on native, `false` on web. Pass
+   *  `false` to fall back to the name-list-based framework filter. */
+  userOnlyStrict?: boolean;
+  /** Regex patterns that mark paths as user code even when they would otherwise
+   *  be hidden by strict mode (e.g. monorepo packages resolved into
+   *  `node_modules/@workspace/ui`). Only consulted when `userOnlyStrict` is on. */
+  userAllowPatterns?: RegExp[];
 }
 
 /** Keys that stay optional in DEFAULT_CONFIG. These are populated by adapters (web/native)
  *  at call-time — the default object should not pretend to know a platform or LAN token. */
-type OptionalConfigKeys = 'getAppUrl' | 'platform' | 'appId' | 'appVersion' | 'host' | 'authToken';
+type OptionalConfigKeys =
+  | 'getAppUrl'
+  | 'platform'
+  | 'appId'
+  | 'appVersion'
+  | 'host'
+  | 'authToken'
+  | 'userOnlyStrict'
+  | 'userAllowPatterns';
 
 export type ResolvedFloTraceConfig = Required<Omit<FloTraceConfig, OptionalConfigKeys>> &
   Pick<FloTraceConfig, OptionalConfigKeys>;

@@ -74,6 +74,10 @@ export interface Fiber {
   alternate?: Fiber | null;
   stateNode?: unknown;
   _debugSource?: { fileName: string; lineNumber: number } | null;
+  /** React 19+: fiber that created this fiber (owner chain). */
+  _debugOwner?: Fiber | null;
+/** React 19.1+: Error captured at JSX creation site (replaces _debugSource in React 19+). */
+  _debugStack?: { stack?: string } | null;
   /** Hook state linked list head (useState, useRef, useMemo, etc.) */
   memoizedState: FiberHookState | null;
   /** Effect queue (useEffect, useLayoutEffect circular list) */
@@ -350,6 +354,13 @@ export interface FiberTreeWalkerOptions {
    */
   frameworkComponentNames?: string[];
   /**
+   * Extra display-name regex patterns treated as framework internals. Used for
+   * generated names that can't be enumerated exhaustively — e.g. React Native's
+   * `Animated(View)` / `Animated(Anonymous)` HOC output or `_withRef` forwardRef
+   * wrappers. Checked when the exact-name set misses.
+   */
+  frameworkComponentNamePatterns?: RegExp[];
+  /**
    * Extra path patterns treated as framework source (merged with the built-in
    * web list). Checked against fiber._debugSource.fileName in dev mode.
    */
@@ -360,15 +371,75 @@ export interface FiberTreeWalkerOptions {
    * views like `RCTView`/`RCTText` don't appear in the tree.
    */
   hostComponentSkipPrefixes?: string[];
+  /**
+   * **Experimental.** Default-deny mode: a fiber is treated as framework
+   * unless there is positive source-path evidence that it originates from user
+   * code. Evidence resolution order (first match wins):
+   *   1. `fiber._debugSource.fileName`
+   *   2. owner-chain walk of `fiber._debugOwner._debugSource.fileName` (3 hops)
+   *   3. first non-react frame parsed from `fiber._debugStack.stack`
+   * A fiber passes iff the resolved path is defined AND does not contain
+   * `node_modules` AND matches `userAllowPatterns` when that list is set.
+   *
+   * Rationale: library code is typically published pre-transpiled so the JSX
+   * source plugin never runs on it, and `_debugSource` is absent. Flipping the
+   * default from allow-list (enumerate every wrapper) to deny-list (require
+   * user evidence) eliminates most of the per-library maintenance burden.
+   *
+   * Degrades gracefully: when strict mode is on but the runtime populates zero
+   * `_debugSource` info on any fiber (e.g. Next.js SWC without the plugin),
+   * the name-based filter remains the fallback.
+   */
+  userOnlyStrict?: boolean;
+  /**
+   * Regex patterns that explicitly mark paths as user code even when they
+   * would otherwise be hidden (e.g. a monorepo package resolved into
+   * `node_modules/@workspace/ui/dist/*`). Only consulted when `userOnlyStrict`
+   * is on. Checked BEFORE the `node_modules` deny rule.
+   */
+  userAllowPatterns?: RegExp[];
 }
 
 let walkerOptions: FiberTreeWalkerOptions = {};
-// Merged name set / pattern list / prefix list — rebuilt when walker options change.
-// Initialized empty here; `installFiberTreeWalker` fills them so we avoid temporal
-// dead zone on the `FRAMEWORK_*` constants declared further down.
-let frameworkComponentNameSet: Set<string> = new Set();
-let frameworkPathPatternList: readonly RegExp[] = [];
-let hostComponentSkipPrefixList: readonly string[] = [];
+
+// Filter configuration — rebuilt when walker options change. Consolidated into a
+// single object so adding/removing filter flags touches one place, and `uninstall`
+// can reset everything to defaults via a factory. Initialized empty to avoid TDZ
+// on the `FRAMEWORK_*` constants declared further down; `installFiberTreeWalker`
+// fills the real values.
+interface WalkerFilterConfig {
+  frameworkNames: Set<string>;
+  frameworkNamePatterns: readonly RegExp[];
+  frameworkPathPatterns: readonly RegExp[];
+  hostSkipPrefixes: readonly string[];
+  userOnlyStrict: boolean;
+  userAllowPatterns: readonly RegExp[];
+}
+
+function defaultFilterConfig(): WalkerFilterConfig {
+  return {
+    frameworkNames: new Set(),
+    frameworkNamePatterns: [],
+    frameworkPathPatterns: [],
+    hostSkipPrefixes: [],
+    userOnlyStrict: false,
+    userAllowPatterns: [],
+  };
+}
+
+let walkerFilterConfig: WalkerFilterConfig = defaultFilterConfig();
+
+// Test-only escape hatch — lets unit tests seed filter state without going
+// through `installFiberTreeWalker` (which requires a browser-like environment,
+// DevTools hooks, WebSocket, etc.). Not re-exported from `index.ts`.
+export function __setWalkerFilterConfigForTesting(
+  partial: Partial<WalkerFilterConfig>,
+): void {
+  walkerFilterConfig = { ...defaultFilterConfig(), ...partial };
+}
+export function __resetWalkerFilterConfigForTesting(): void {
+  walkerFilterConfig = defaultFilterConfig();
+}
 
 // Track which strategy is active
 let activeStrategy: "devtools" | "dom" | null = null;
@@ -468,8 +539,8 @@ function isUserComponent(fiber: Fiber): boolean {
   // React Native leaks `RCTView`/`RCTScrollView`/etc. through as user-component-tag
   // fibers; their children are already surfaced via the transparent-wrapper branch,
   // so we drop the wrapper name itself from the tree.
-  if (hostComponentSkipPrefixList.length > 0) {
-    for (const prefix of hostComponentSkipPrefixList) {
+  if (walkerFilterConfig.hostSkipPrefixes.length > 0) {
+    for (const prefix of walkerFilterConfig.hostSkipPrefixes) {
       if (name.startsWith(prefix)) return false;
     }
   }
@@ -550,12 +621,118 @@ const FRAMEWORK_PATH_PATTERNS: RegExp[] = [
  * Platform adapters can inject extra names/patterns via
  * `installFiberTreeWalker({ frameworkComponentNames, frameworkPathPatterns })`.
  */
-function isFrameworkComponent(fiber: Fiber, name: string): boolean {
-  if (frameworkComponentNameSet.has(name)) return true;
+/**
+ * Resolve the most useful source-file path for a fiber, trying three evidence
+ * sources in order:
+ *   1. `fiber._debugSource.fileName` — React 17/18 + early 19 (Babel JSX plugin)
+ *   2. `fiber._debugOwner` chain (3-hop) — enriches wrappers that don't carry
+ *      `_debugSource` themselves but are rendered by user code that does
+ *   3. `fiber._debugStack.stack` first non-react frame — React 19.1+ replaces
+ *      `_debugSource` with an Error object captured at JSX-creation time
+ */
+function resolveEffectiveSourcePath(fiber: Fiber): string | null {
+  if (fiber._debugSource?.fileName) return fiber._debugSource.fileName;
 
+  const ownerHit = walkAncestors<string>(
+    fiber._debugOwner ?? null,
+    3,
+    (f) => f._debugOwner ?? null,
+    (cur) => cur._debugSource?.fileName ?? undefined,
+  );
+  if (ownerHit) return ownerHit;
+
+  const stack = fiber._debugStack?.stack;
+  if (typeof stack === 'string') {
+    const parsed = parseFirstNonReactFrame(stack);
+    if (parsed) return parsed;
+  }
+
+  return null;
+}
+
+/**
+ * Sentinel returned from a `walkAncestors` visitor to halt the climb with
+ * `undefined` — used when a semantic boundary is reached (e.g. an emitted
+ * non-framework user ancestor whose identity belongs to itself).
+ */
+const STOP_WALK: unique symbol = Symbol('stop-walk');
+type WalkVisit<T> = T | typeof STOP_WALK | undefined;
+
+/**
+ * Walks up to `maxHops` ancestors starting from `start`, moving via `next`.
+ * Returns the first defined value produced by `visit`; returns `undefined`
+ * when `visit` emits STOP_WALK or the hop/null limit is reached.
+ *
+ * Starting pointer is visited (not skipped) — callers pass e.g. `fiber.return`
+ * when they want to exclude the fiber itself.
+ */
+function walkAncestors<T>(
+  start: Fiber | null,
+  maxHops: number,
+  next: (fiber: Fiber) => Fiber | null | undefined,
+  visit: (fiber: Fiber) => WalkVisit<T>,
+): T | undefined {
+  let cur: Fiber | null = start;
+  for (let hops = 0; cur && hops < maxHops; hops++, cur = next(cur) ?? null) {
+    const out = visit(cur);
+    if (out === STOP_WALK) return undefined;
+    if (out !== undefined) return out;
+  }
+  return undefined;
+}
+
+/**
+ * Parse the first V8/Hermes stack frame that is NOT inside React/RN internals.
+ * Frame formats handled:
+ *   "    at Component (file:///path/file.tsx:10:5)"
+ *   "    at http://localhost:8081/index.bundle?... (file:///path:10:5)"
+ *   "Component@/path/to/file.tsx:10:5"  (Hermes)
+ */
+function parseFirstNonReactFrame(stack: string): string | null {
+  const lines = stack.split('\n');
+  for (const line of lines) {
+    // V8: "(path:line:col)"; Hermes: "@path:line:col"
+    const parened = line.match(/\(([^)]+):\d+:\d+\)/);
+    const hermes = line.match(/@([^\s]+):\d+:\d+$/);
+    const path = parened?.[1] ?? hermes?.[1];
+    if (!path) continue;
+    if (path.includes('react-dom')) continue;
+    if (path.includes('react-native/Libraries')) continue;
+    if (path.includes('/react/cjs/')) continue;
+    if (path.includes('/scheduler/')) continue;
+    return path;
+  }
+  return null;
+}
+
+function isFrameworkComponent(fiber: Fiber, name: string): boolean {
+  if (walkerFilterConfig.frameworkNames.has(name)) return true;
+
+  for (const pattern of walkerFilterConfig.frameworkNamePatterns) {
+    if (pattern.test(name)) return true;
+  }
+
+  // Strict mode: require positive source-path evidence that this fiber is user
+  // code. Allowlist takes precedence, then node_modules deny-rule fires.
+  if (walkerFilterConfig.userOnlyStrict) {
+    const effective = resolveEffectiveSourcePath(fiber);
+    if (effective) {
+      for (const allow of walkerFilterConfig.userAllowPatterns) {
+        if (allow.test(effective)) return false;
+      }
+      if (effective.includes('node_modules')) return true;
+    }
+    // When strict mode is on AND no evidence is present at all, fall through
+    // to the path-pattern check below (degrade gracefully rather than force-hide,
+    // since some bundlers legitimately omit all source metadata).
+  }
+
+  // Library code is published pre-transpiled, so `_debugSource` is usually only
+  // present on user JSX — path-based detection here is a best-effort safety net,
+  // not the primary strategy. Name-based detection above is the reliable path.
   const filePath = fiber._debugSource?.fileName;
   if (filePath) {
-    for (const pattern of frameworkPathPatternList) {
+    for (const pattern of walkerFilterConfig.frameworkPathPatterns) {
       if (pattern.test(filePath)) return true;
     }
   }
@@ -726,6 +903,42 @@ function scanFiberStateForOrigin(fiber: Fiber, componentName: string): void {
 }
 
 /**
+ * Resolve the React `key` that visually belongs to this component.
+ *
+ * Direct key (`<X key="a" />`) wins. Otherwise we walk up through framework /
+ * transparent wrappers and inherit the first string key we find. This is what
+ * makes mapped-list children show up with a key in the graph even though the
+ * common RN pattern puts the key on a hidden wrapper:
+ *
+ *   <FlatList data={items} keyExtractor={i => i.id} renderItem={...} />
+ *     → CellRenderer  (fiber.key = extracted id, FILTERED as framework)
+ *       → View        (host, no key)
+ *         → RowCard   (fiber.key = null — what walkFiber sees directly)
+ *
+ * We stop the climb at the nearest *emitted user* ancestor so we never steal
+ * another sibling's key, and cap at 6 hops so deeply-buried wrappers don't
+ * inherit irrelevant keys from far up the tree.
+ */
+// Exported for test harness only — not re-exported from `index.ts`, so not part
+// of the package's public API surface.
+export function resolveEffectiveReactKey(fiber: Fiber): string | undefined {
+  if (typeof fiber.key === 'string') return fiber.key;
+  return walkAncestors<string>(
+    fiber.return ?? null,
+    6,
+    (f) => f.return ?? null,
+    (cur) => {
+      // Another emitted non-framework user component above — stop, the key (if any)
+      // belongs to that node, not to us.
+      if (isUserComponent(cur) && !isFrameworkComponent(cur, getComponentName(cur))) {
+        return STOP_WALK;
+      }
+      return typeof cur.key === 'string' ? cur.key : undefined;
+    },
+  );
+}
+
+/**
  * Walk the fiber tree starting from a fiber node.
  * Skips host elements and transparent wrappers, keeps user components.
  *
@@ -817,7 +1030,7 @@ function walkFiber(
           filePath: current._debugSource?.fileName,
           lineNumber: current._debugSource?.lineNumber,
           isFramework: framework,
-          reactKey: typeof current.key === 'string' ? current.key : undefined,
+          reactKey: resolveEffectiveReactKey(current),
           queryHashes,
           hookCount: countFiberHooks(current),
           hasContextHook: hasFiberContextHook(current) || undefined,
@@ -1448,13 +1661,18 @@ export function installFiberTreeWalker(
   isInstalled = true;
 
   // Merge built-in framework detection with platform-supplied extras.
-  frameworkComponentNameSet = options.frameworkComponentNames?.length
-    ? new Set<string>([...FRAMEWORK_COMPONENT_NAMES, ...options.frameworkComponentNames])
-    : FRAMEWORK_COMPONENT_NAMES;
-  frameworkPathPatternList = options.frameworkPathPatterns?.length
-    ? [...FRAMEWORK_PATH_PATTERNS, ...options.frameworkPathPatterns]
-    : FRAMEWORK_PATH_PATTERNS;
-  hostComponentSkipPrefixList = options.hostComponentSkipPrefixes ?? [];
+  walkerFilterConfig = {
+    frameworkNames: options.frameworkComponentNames?.length
+      ? new Set<string>([...FRAMEWORK_COMPONENT_NAMES, ...options.frameworkComponentNames])
+      : FRAMEWORK_COMPONENT_NAMES,
+    frameworkNamePatterns: options.frameworkComponentNamePatterns ?? [],
+    frameworkPathPatterns: options.frameworkPathPatterns?.length
+      ? [...FRAMEWORK_PATH_PATTERNS, ...options.frameworkPathPatterns]
+      : FRAMEWORK_PATH_PATTERNS,
+    hostSkipPrefixes: options.hostComponentSkipPrefixes ?? [],
+    userOnlyStrict: options.userOnlyStrict === true,
+    userAllowPatterns: options.userAllowPatterns ?? [],
+  };
 
   // Install RSC payload interceptor for Next.js App Router detection (best-effort)
   try {
@@ -1787,9 +2005,7 @@ export function uninstallFiberTreeWalker(): void {
   lastSnapshotSentTime = 0;
   isInstalled = false;
   walkerOptions = {};
-  frameworkComponentNameSet = new Set();
-  frameworkPathPatternList = [];
-  hostComponentSkipPrefixList = [];
+  walkerFilterConfig = defaultFilterConfig();
   try { uninstallRscPayloadInterceptor(); } catch { /* non-fatal */ }
   clearActionStateCache();
   resetNextjsDetection();
