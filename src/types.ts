@@ -50,7 +50,8 @@ export type RuntimeMessage =
   | RuntimeRscPayloadMessage
   | RuntimeHydrationEventMessage
   | RuntimeNetworkRequestMessage
-  | RuntimeLocalStateCorrelationMessage;
+  | RuntimeLocalStateCorrelationMessage
+  | RuntimePongMessage;
 
 export interface RuntimeReadyMessage {
   type: 'runtime:ready';
@@ -137,6 +138,16 @@ export interface RuntimeContextUpdateMessage {
 export interface RuntimeDisconnectMessage {
   type: 'runtime:disconnect';
   reason?: string;
+}
+
+/**
+ * Heartbeat response. The desktop pings every few seconds; the runtime replies
+ * with a pong so the server can detect native-crash scenarios where the JS
+ * thread is frozen but the socket is still technically open.
+ */
+export interface RuntimePongMessage {
+  type: 'runtime:pong';
+  timestamp: number;
 }
 
 export interface RuntimeTreeSnapshotMessage {

@@ -252,6 +252,15 @@ export class FloTraceWebSocketClient {
    * Handle incoming message from extension
    */
   private handleMessage(message: ExtensionToRuntimeMessage): void {
+    // Respond to server heartbeat before fan-out so app-level handlers don't
+    // have to know about it. Uses sendImmediate so the pong isn't delayed by
+    // the 100ms batch-flush window — crash detection relies on round-trip
+    // latency being tight.
+    if (message.type === 'ext:ping') {
+      this.sendImmediate({ type: 'runtime:pong', timestamp: Date.now() });
+      return;
+    }
+
     for (const handler of this.messageHandlers) {
       try {
         handler(message);
