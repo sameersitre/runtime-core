@@ -65,6 +65,15 @@ export interface RuntimeReadyMessage {
   appId?: string;
   /** App version — shown in the desktop connection panel for diagnostic purposes. */
   appVersion?: string;
+  /** Auto-detected framework family. Adapters populate this from runtime probes
+   *  (DOM signals on web, optional-require on native). */
+  frameworkName?: 'next' | 'expo' | 'rn-cli' | 'plain-react';
+  /** Framework version when the adapter can resolve it (e.g. Next.js via
+   *  `require('next/package.json').version`). Missing when unavailable. */
+  frameworkVersion?: string;
+  /** React Native version from `Platform.constants.reactNativeVersion`, formatted
+   *  as "major.minor.patch". Native-only; web adapter leaves this undefined. */
+  reactNativeVersion?: string;
 }
 
 export interface RuntimeRenderMessage {
@@ -840,6 +849,14 @@ export interface FloTraceConfig {
    *  be hidden by strict mode (e.g. monorepo packages resolved into
    *  `node_modules/@workspace/ui`). Only consulted when `userOnlyStrict` is on. */
   userAllowPatterns?: RegExp[];
+  /** Auto-detected framework family. Adapters set this via platform-specific probes
+   *  (DOM signals on web; optional-require on native). Not a user-facing knob. */
+  frameworkName?: 'next' | 'expo' | 'rn-cli' | 'plain-react';
+  /** Framework version when the adapter can resolve it. Not a user-facing knob. */
+  frameworkVersion?: string;
+  /** React Native version from `Platform.constants.reactNativeVersion`, formatted
+   *  "major.minor.patch". Native adapter only. */
+  reactNativeVersion?: string;
 }
 
 /** Keys that stay optional in DEFAULT_CONFIG. These are populated by adapters (web/native)
@@ -852,7 +869,10 @@ type OptionalConfigKeys =
   | 'host'
   | 'authToken'
   | 'userOnlyStrict'
-  | 'userAllowPatterns';
+  | 'userAllowPatterns'
+  | 'frameworkName'
+  | 'frameworkVersion'
+  | 'reactNativeVersion';
 
 export type ResolvedFloTraceConfig = Required<Omit<FloTraceConfig, OptionalConfigKeys>> &
   Pick<FloTraceConfig, OptionalConfigKeys>;

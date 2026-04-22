@@ -1,3 +1,4 @@
+import React from 'react';
 import type {
   RuntimeMessage,
   ExtensionToRuntimeMessage,
@@ -80,6 +81,9 @@ export class FloTraceWebSocketClient {
           platform: this.config.platform,
           appId: this.config.appId,
           appVersion: this.config.appVersion,
+          frameworkName: this.config.frameworkName,
+          frameworkVersion: this.config.frameworkVersion,
+          reactNativeVersion: this.config.reactNativeVersion,
         });
 
         // Flush any queued messages
@@ -307,14 +311,17 @@ export class FloTraceWebSocketClient {
   }
 
   /**
-   * Get React version if available
+   * Get React version if available.
+   *
+   * Historical note: an earlier implementation read `globalThis.React?.version` —
+   * but React is an ES-module import in modern bundles (Vite/webpack/Next.js) and
+   * is never placed on `globalThis`, so the probe returned undefined for every
+   * typical bundled app. Reading `React.version` via a direct import is
+   * authoritative across web (both CJS and ESM bundles), React Native, and SSR.
    */
   private getReactVersion(): string | undefined {
     try {
-      // React exposes version on globalThis.React (browser) or can be required synchronously
-      // in React Native. Use globalThis so this stays DOM-free.
-      const React = (globalThis as { React?: { version?: string } }).React;
-      return React?.version;
+      return (React as unknown as { version?: string }).version;
     } catch {
       return undefined;
     }

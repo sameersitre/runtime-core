@@ -116,6 +116,10 @@ export {
   maybeEmitNextjsContext,
   resetNextjsDetection,
 } from './nextjsDetector';
+
+// Framework + version detection (web adapter use)
+export { detectWebFramework } from './frameworkDetect';
+export type { FrameworkInfo } from './frameworkDetect';
 export {
   installRscPayloadInterceptor,
   uninstallRscPayloadInterceptor,
