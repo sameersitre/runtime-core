@@ -51,6 +51,7 @@ export type RuntimeMessage =
   | RuntimeHydrationEventMessage
   | RuntimeNetworkRequestMessage
   | RuntimeLocalStateCorrelationMessage
+  | RuntimeValueTraceMessage
   | RuntimePongMessage;
 
 export interface RuntimeReadyMessage {
@@ -749,6 +750,103 @@ export interface RuntimeLocalStateCorrelationMessage {
   timestamp: number;
 }
 
+// ============================================================================
+// Value Lineage (Variable Origin Tracing)
+// ============================================================================
+
+/**
+ * Confidence of a single trace step boundary.
+ * - `exact`: reference identity (`===`) preserved across the step.
+ * - `fingerprint-match`: only structural match via valueFingerprint(). Primitive
+ *   collisions are possible here (e.g., `count: 5` at multiple call sites).
+ */
+export type TraceConfidence = 'exact' | 'fingerprint-match';
+
+/**
+ * A single step in a value-origin chain.
+ * Chain ordering: consumer first, origin last.
+ */
+export type TraceStep =
+  | {
+      kind: 'prop';
+      nodeId: string;
+      componentName: string;
+      /** Dot-path into the component's props (e.g., ['user', 'profile', 'avatarUrl']). */
+      propPath: string[];
+      /** If this step came via a rename edge in the drilling graph. */
+      renamedFrom?: string;
+      confidence: TraceConfidence;
+    }
+  | {
+      kind: 'hook-state';
+      nodeId: string;
+      componentName: string;
+      hookIndex: number;
+      hookType: HookType;
+      /** Sub-path into the hook's current value, when the traced leaf is nested. */
+      subPath?: string[];
+      confidence: TraceConfidence;
+    }
+  | {
+      kind: 'store';
+      source: 'zustand' | 'redux' | 'tanstack-query';
+      storeName: string;
+      /** Key path into the store state where the matching value lives. */
+      keyPath: string[];
+      confidence: TraceConfidence;
+    }
+  | {
+      kind: 'api';
+      requestId: string;
+      method: string;
+      /** URL path only — query params stripped for privacy. */
+      urlPath: string;
+      status?: number;
+      /** Age of the fetch at trace resolution time. */
+      ageMs: number;
+      /** True when the 3s FETCH_ORIGIN_TTL_MS window has lapsed. */
+      expired?: boolean;
+    }
+  | {
+      // v2+ — present here so wire-format is forward-compatible.
+      kind: 'context';
+      contextName: string;
+      providerNodeId?: string;
+      confidence: TraceConfidence;
+    };
+
+/**
+ * Result of a single value-trace request.
+ */
+export interface ValueTrace {
+  /** Round-trip ID — mirrors the requestId from ext:traceValue. */
+  requestId: string;
+  rootNodeId: string;
+  /** Dot-path from the component when tracing a prop (e.g., ['user','profile','avatarUrl']). */
+  rootPropPath?: string[];
+  /** When tracing a hook value, addresses hook index + optional sub-path inside its value. */
+  rootHookPath?: { hookIndex: number; subPath?: string[] };
+  /** Ordered steps — index 0 is the consumer, last index is the origin. */
+  steps: TraceStep[];
+  /** Wall-clock time the resolver completed. */
+  resolvedAtMs: number;
+  /** True when the 50ms budget tripped and the chain is partial. */
+  truncated?: boolean;
+  /**
+   * Optional error hint for friendly empty states.
+   * - `value-not-found`: target path doesn't exist on the current fiber.
+   * - `no-fiber`: nodeId no longer present in fiberRefMap (component unmounted).
+   * - `budget-exceeded`: bailed before finding origin.
+   */
+  error?: 'value-not-found' | 'no-fiber' | 'budget-exceeded';
+}
+
+export interface RuntimeValueTraceMessage {
+  type: 'runtime:valueTrace';
+  trace: ValueTrace;
+  timestamp: number;
+}
+
 /**
  * Messages received from extension
  */
@@ -775,7 +873,21 @@ export type ExtensionToRuntimeMessage =
   | { type: 'ext:startZustandTracking' }
   | { type: 'ext:stopZustandTracking' }
   | { type: 'ext:startTanstackTracking' }
-  | { type: 'ext:stopTanstackTracking' };
+  | { type: 'ext:stopTanstackTracking' }
+  /**
+   * Value Lineage — resolve the origin of a specific prop or hook value.
+   * Either `propPath` or `hookPath` must be set (exactly one).
+   */
+  | {
+      type: 'ext:traceValue';
+      /** Round-trip ID — echoed back in runtime:valueTrace. */
+      requestId: string;
+      nodeId: string;
+      /** When tracing a prop: dot-path like ['user','profile','avatarUrl']. Index 0 is the top-level prop key. */
+      propPath?: string[];
+      /** When tracing a hook value: hook index + optional nested sub-path inside its value. */
+      hookPath?: { hookIndex: number; subPath?: string[] };
+    };
 
 export interface TrackingOptions {
   trackAllRenders?: boolean;

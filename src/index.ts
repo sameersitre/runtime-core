@@ -38,6 +38,14 @@ export type {
   RuntimeTreeDiffMessage,
 } from './types';
 
+// Value Lineage (Variable Origin Tracing) types
+export type {
+  TraceConfidence,
+  TraceStep,
+  ValueTrace,
+  RuntimeValueTraceMessage,
+} from './types';
+
 // Fiber tree walker
 export {
   installFiberTreeWalker,
