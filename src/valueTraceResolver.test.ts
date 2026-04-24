@@ -216,26 +216,68 @@ describe('resolveValueTrace', () => {
     expect(trace.truncated).toBeUndefined();
   });
 
-  // Case 7 — Nested field: child receives user.profile.email, parent only has `user`.
-  it('traces a nested field back to an ancestor that holds the parent object', () => {
-    const user = { id: 1, profile: { email: 'a@b.com', name: 'Jane' } };
-    const parent = makeFiber({ name: 'App', memoizedProps: { user } });
-    const child = makeFiber({
-      name: 'EmailLabel',
-      memoizedProps: { email: user.profile.email },
-      parent,
+  // Case 7 — Nested field: child receives a sub-object of parent's prop.
+  // Happy path: child has `profile={user.profile}`; ancestor has `user` top-level.
+  // The resolver must DFS into the ancestor's `user` prop and emit the ancestor
+  // step with the sub-path that leads to the matched value.
+  it('traces a nested object field back to an ancestor that holds the parent object', () => {
+    const profile = { avatarUrl: 'https://cdn/a.jpg', name: 'Jane' };
+    const user = { id: 1, profile };
+    const app = makeFiber({ name: 'App', memoizedProps: { user } });
+    const avatar = makeFiber({
+      name: 'Avatar',
+      memoizedProps: { profile }, // child sees just the sub-object
+      parent: app,
     });
-    mockFiberRefMap.set('App', parent);
-    mockFiberRefMap.set('App/EmailLabel', child);
-    mockZustandSnapshot.set('authStore', { user });
+    mockFiberRefMap.set('App', app);
+    mockFiberRefMap.set('App/Avatar', avatar);
 
-    // Trace the child's `email` prop — it's a primitive so no direct structural
-    // match, but the important property is we correctly find NO origin without
-    // crashing. (Full nested-field resolution follows the user object, not
-    // the email primitive — that's rubric §5.1 "derived primitive".)
-    const trace = resolveValueTrace({ nodeId: 'App/EmailLabel', propPath: ['email'] });
+    const trace = resolveValueTrace({ nodeId: 'App/Avatar', propPath: ['profile'] });
+
     expect(trace.error).toBeUndefined();
-    expect(trace.steps[0]).toMatchObject({ kind: 'prop', propPath: ['email'] });
+    const kinds = trace.steps.map((s) => s.kind);
+    expect(kinds).toEqual(['prop', 'prop']);
+    // Ancestor step points into the nested path under the ancestor's `user` prop.
+    const ancestorStep = trace.steps[1];
+    expect(ancestorStep).toMatchObject({
+      kind: 'prop',
+      componentName: 'App',
+      propPath: ['user', 'profile'],
+      confidence: 'exact',
+    });
+  });
+
+  // Case 8 — Rename + nested field: the child receives the sub-object under a
+  // renamed key. Resolver should still walk to the ancestor via reference
+  // identity (DFS finds the sub-value regardless of the prop name above).
+  it('traces a nested field even when the parent drills under a renamed key', () => {
+    const profile = { email: 'jane@x.com' };
+    const user = { id: 1, profile };
+    const layout = makeFiber({ name: 'Layout', memoizedProps: { currentUser: user } });
+    const row = makeFiber({
+      name: 'UserRow',
+      memoizedProps: { userProfile: profile }, // renamed AND nested
+      parent: layout,
+    });
+    mockFiberRefMap.set('Layout', layout);
+    mockFiberRefMap.set('Layout/UserRow', row);
+
+    const trace = resolveValueTrace({
+      nodeId: 'Layout/UserRow',
+      propPath: ['userProfile'],
+    });
+
+    expect(trace.error).toBeUndefined();
+    const kinds = trace.steps.map((s) => s.kind);
+    expect(kinds).toEqual(['prop', 'prop']);
+    const ancestorStep = trace.steps[1];
+    // Ancestor found the sub-value under its own renamed key `currentUser`.
+    expect(ancestorStep).toMatchObject({
+      kind: 'prop',
+      componentName: 'Layout',
+      propPath: ['currentUser', 'profile'],
+      confidence: 'exact',
+    });
   });
 
   // Case 8 — Unknown nodeId → error='no-fiber'.
