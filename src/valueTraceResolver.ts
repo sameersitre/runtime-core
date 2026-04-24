@@ -16,6 +16,21 @@
 
 import type { Fiber, FiberHookState } from './fiberTreeWalker';
 import { getFiberRefMap } from './fiberTreeWalker';
+
+/**
+ * Context-dependency linked list node (React 18+).
+ * `fiber.dependencies.firstContext → FiberContextDependency[]`. Duck-typed so
+ * the resolver doesn't import the internal `fiberTreeWalker` type directly
+ * (keeps the surface small).
+ */
+interface FiberContextDep {
+  context: { _currentValue: unknown; displayName?: string };
+  memoizedValue: unknown;
+  next: FiberContextDep | null;
+}
+
+/** React ContextProvider fiber tag. Mirrors FIBER_TAGS.ContextProvider = 10. */
+const FIBER_TAG_CONTEXT_PROVIDER = 10;
 import { getComponentNameFromFiber } from './fiberAttribution';
 import { valueFingerprint, shouldFlagRename } from './propDrillingAnalyzer';
 import { findFetchOrigin } from './fetchOriginRegistry';
@@ -244,20 +259,26 @@ export function resolveValueTrace(input: ValueTraceInput): Omit<ValueTrace, 'req
     while (current && hops < MAX_PROP_CHAIN_DEPTH) {
       if (now() > deadline) return { ...base, steps, truncated: true, resolvedAtMs: now() };
 
-      const props = current.memoizedProps;
-      if (props) {
-        const match = findMatchingPathInObject(rootValue, rootFp, props, [], 0, deadline);
-        if (match) {
-          const ancestorNodeId = fiberToNodeId.get(current);
-          const ancestorName = getComponentNameFromFiber(current) ?? 'Unknown';
-          if (ancestorNodeId) {
-            steps.push({
-              kind: 'prop',
-              nodeId: ancestorNodeId,
-              componentName: ancestorName,
-              propPath: match.path,
-              confidence: match.confidence,
-            });
+      // Skip ContextProvider fibers — they carry the context value as a
+      // mechanical `value` prop, but from the user's mental model the value
+      // arrives via the context hook, not as a prop drill. The context-step
+      // logic below surfaces the provider explicitly.
+      if (current.tag !== FIBER_TAG_CONTEXT_PROVIDER) {
+        const props = current.memoizedProps;
+        if (props) {
+          const match = findMatchingPathInObject(rootValue, rootFp, props, [], 0, deadline);
+          if (match) {
+            const ancestorNodeId = fiberToNodeId.get(current);
+            const ancestorName = getComponentNameFromFiber(current) ?? 'Unknown';
+            if (ancestorNodeId) {
+              steps.push({
+                kind: 'prop',
+                nodeId: ancestorNodeId,
+                componentName: ancestorName,
+                propPath: match.path,
+                confidence: match.confidence,
+              });
+            }
           }
         }
       }
@@ -283,7 +304,37 @@ export function resolveValueTrace(input: ValueTraceInput): Omit<ValueTrace, 'req
     }
   }
 
-  // 6. Store match — Zustand, Redux, TanStack Query (first match wins).
+  // 6. Context match — walk fiber.dependencies (React 18+) for a context
+  //    whose memoizedValue matches the target. Emits a context step that
+  //    terminates the chain from the consumer's perspective; if a Provider
+  //    fiber is in the ancestor path we further try to correlate the
+  //    provider value to a store / API for the full chain.
+  const contextMatch = findContextMatch(fiber, rootValue, rootFp, fiberToNodeId);
+  if (contextMatch) {
+    steps.push(contextMatch.step);
+    const providerStoreMatch = findStoreMatch(contextMatch.providerValue, valueFingerprint(contextMatch.providerValue), deadline);
+    if (providerStoreMatch) {
+      steps.push({
+        kind: 'store',
+        source: providerStoreMatch.source,
+        storeName: providerStoreMatch.storeName,
+        keyPath: providerStoreMatch.keyPath,
+        confidence: providerStoreMatch.confidence,
+      });
+      const origin = findFetchOrigin(providerStoreMatch.matchedValue);
+      if (origin) {
+        steps.push({ kind: 'api', requestId: origin, method: 'UNKNOWN', urlPath: '', ageMs: 0 });
+      }
+    } else {
+      const origin = findFetchOrigin(contextMatch.providerValue);
+      if (origin) {
+        steps.push({ kind: 'api', requestId: origin, method: 'UNKNOWN', urlPath: '', ageMs: 0 });
+      }
+    }
+    return { ...base, steps, resolvedAtMs: now() };
+  }
+
+  // 7. Store match — Zustand, Redux, TanStack Query (first match wins).
   const storeMatch = findStoreMatch(rootValue, rootFp, deadline);
   if (storeMatch) {
     steps.push({
@@ -294,7 +345,7 @@ export function resolveValueTrace(input: ValueTraceInput): Omit<ValueTrace, 'req
       confidence: storeMatch.confidence,
     });
 
-    // 7. Store → API match.
+    // 8. Store → API match.
     const origin = findFetchOrigin(storeMatch.matchedValue);
     if (origin) {
       steps.push({
@@ -308,6 +359,63 @@ export function resolveValueTrace(input: ValueTraceInput): Omit<ValueTrace, 'req
   }
 
   return { ...base, steps, resolvedAtMs: now() };
+}
+
+// ---------------------------------------------------------------------------
+// Context match
+// ---------------------------------------------------------------------------
+
+interface ContextMatchResult {
+  step: Extract<TraceStep, { kind: 'context' }>;
+  /** Value read off the nearest <Context.Provider value={...}>, or the consumer's
+   *  memoized context value if no provider is in the ancestor chain. */
+  providerValue: unknown;
+}
+
+function findContextMatch(
+  consumer: Fiber,
+  target: unknown,
+  targetFp: string,
+  fiberToNodeId: Map<Fiber, string>,
+): ContextMatchResult | null {
+  const deps = consumer.dependencies?.firstContext as FiberContextDep | null | undefined;
+  if (!deps) return null;
+
+  let dep: FiberContextDep | null = deps;
+  while (dep) {
+    const match = valuesMatch(target, targetFp, dep.memoizedValue);
+    if (match) {
+      const provider = findNearestProvider(consumer, dep.context);
+      const step: Extract<TraceStep, { kind: 'context' }> = {
+        kind: 'context',
+        contextName: dep.context.displayName || 'Context',
+        providerNodeId: provider ? fiberToNodeId.get(provider) : undefined,
+        confidence: match,
+      };
+      const providerValue = provider?.memoizedProps?.value ?? dep.memoizedValue;
+      return { step, providerValue };
+    }
+    dep = dep.next;
+  }
+  return null;
+}
+
+/**
+ * Walk `fiber.return` chain looking for the nearest ContextProvider fiber
+ * whose `type._context` matches the given context object.
+ */
+function findNearestProvider(consumer: Fiber, contextObj: unknown): Fiber | null {
+  let current: Fiber | null = consumer.return;
+  let hops = 0;
+  while (current && hops < MAX_PROP_CHAIN_DEPTH) {
+    if (current.tag === FIBER_TAG_CONTEXT_PROVIDER) {
+      const providerType = current.type as { _context?: unknown } | null;
+      if (providerType && providerType._context === contextObj) return current;
+    }
+    current = current.return;
+    hops++;
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------

@@ -47,19 +47,26 @@ function makeFiber(opts: {
   memoizedProps?: Record<string, unknown> | null;
   parent?: Fiber | null;
   memoizedState?: unknown;
+  /** Non-zero for Provider fibers etc. Function components default to 0. */
+  tag?: number;
+  /** For ContextProvider fibers: Provider element shape { _context: <ctx> }. */
+  type?: unknown;
+  /** React 18+ context dependency linked list read by hooks on this fiber. */
+  dependencies?: { firstContext: unknown } | null;
 }): Fiber {
   const fn = function () {} as unknown as { displayName?: string };
   fn.displayName = opts.name;
   return {
-    tag: 0,
+    tag: opts.tag ?? 0,
     key: null,
-    type: fn,
+    type: opts.type ?? fn,
     child: null,
     sibling: null,
     return: opts.parent ?? null,
     memoizedProps: opts.memoizedProps ?? null,
     pendingProps: null,
     memoizedState: opts.memoizedState ?? null,
+    dependencies: opts.dependencies ?? null,
   } as unknown as Fiber;
 }
 
@@ -236,6 +243,52 @@ describe('resolveValueTrace', () => {
     const trace = resolveValueTrace({ nodeId: 'Phantom/Node', propPath: ['x'] });
     expect(trace.error).toBe('no-fiber');
     expect(trace.steps).toEqual([]);
+  });
+
+  // Case 9 — Context match with nearest Provider.
+  it('emits a context step when the consumer reads a matching useContext value', () => {
+    const user = { id: 1, name: 'Jane' };
+    const AuthContext = { _currentValue: user, displayName: 'AuthContext' };
+
+    // Provider fiber sits above the consumer in the return chain.
+    const providerType = { _context: AuthContext };
+    const provider = makeFiber({
+      name: 'AuthProvider',
+      tag: 10, // ContextProvider
+      type: providerType,
+      memoizedProps: { value: user, children: null },
+    });
+    // Consumer reads useContext(AuthContext) and consumes `user`.
+    const consumer = makeFiber({
+      name: 'Profile',
+      memoizedProps: { user },
+      parent: provider,
+      dependencies: {
+        firstContext: {
+          context: AuthContext,
+          memoizedValue: user,
+          next: null,
+        },
+      },
+    });
+    mockFiberRefMap.set('AuthProvider', provider);
+    mockFiberRefMap.set('AuthProvider/Profile', consumer);
+
+    const trace = resolveValueTrace({
+      nodeId: 'AuthProvider/Profile',
+      propPath: ['user'],
+    });
+
+    expect(trace.error).toBeUndefined();
+    // Consumer prop + context step. No store / api available in this test.
+    const kinds = trace.steps.map((s) => s.kind);
+    expect(kinds).toEqual(['prop', 'context']);
+    const ctx = trace.steps[1];
+    expect(ctx).toMatchObject({
+      kind: 'context',
+      contextName: 'AuthContext',
+      providerNodeId: 'AuthProvider',
+    });
   });
 
   // Bonus — value-not-found when propPath dives into missing keys.
