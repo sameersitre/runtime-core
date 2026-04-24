@@ -43,8 +43,13 @@ import type { TraceStep, ValueTrace } from './types';
 // Constants
 // ---------------------------------------------------------------------------
 
-/** Hard ceiling on wall-clock time per resolve. Over this → bail with truncated=true. */
-const BUDGET_MS = 50;
+/**
+ * Hard ceiling on wall-clock time per resolve. Over this → bail with truncated=true.
+ * 100ms gives headroom for deep React Native trees (virtualized lists wrap rows
+ * in 10–15 framework layers); still well under a frame and under the PRD §9.5.1
+ * end-to-end budget of 200ms P95 (50ms IPC + 50ms render + 100ms resolver).
+ */
+const BUDGET_MS = 100;
 
 /** Max recursive depth when scanning an object/store for a matching fingerprint. */
 const SCAN_DEPTH = 3;
@@ -100,8 +105,27 @@ function getHookValueAt(fiber: Fiber, hookIndex: number): unknown {
 }
 
 // ---------------------------------------------------------------------------
-// Matching — reference identity + fingerprint
+// Matching — reference identity + fingerprint (with per-resolve cache)
 // ---------------------------------------------------------------------------
+
+/**
+ * Per-trace fingerprint cache. Object → its valueFingerprint() output.
+ * Same reference fingerprints identically, so caching once per resolve call
+ * avoids recomputing `valueFingerprint` on the same sub-objects for every
+ * ancestor scan — the dominant cost on deep React Native trees where
+ * 10–15 wrapper layers each DFS their memoizedProps looking for matches.
+ * Passed explicitly (not module-level) so concurrent resolves never share state.
+ */
+type FpCache = WeakMap<object, string>;
+
+function cachedFp(value: unknown, cache: FpCache): string {
+  if (value === null || typeof value !== 'object') return valueFingerprint(value);
+  const cached = cache.get(value as object);
+  if (cached !== undefined) return cached;
+  const fp = valueFingerprint(value);
+  cache.set(value as object, fp);
+  return fp;
+}
 
 /**
  * True when `candidate` can be confidently identified as the "same value" as
@@ -113,6 +137,7 @@ function valuesMatch(
   target: unknown,
   targetFp: string,
   candidate: unknown,
+  cache: FpCache,
 ): 'exact' | 'fingerprint-match' | null {
   const targetIsObject = target !== null && typeof target === 'object';
   const candidateIsObject = candidate !== null && typeof candidate === 'object';
@@ -125,7 +150,26 @@ function valuesMatch(
   // values like `5`, `true`, `""`, `{}`, `[]` that collide across unrelated sites.
   if (!shouldFlagRename(target) || !shouldFlagRename(candidate)) return null;
 
-  if (valueFingerprint(candidate) === targetFp) return 'fingerprint-match';
+  if (cachedFp(candidate, cache) === targetFp) return 'fingerprint-match';
+  return null;
+}
+
+/**
+ * Fast first-pass: scan top-level keys of `container` for a reference-identity
+ * (`===`) match against `target`. Returns the matched key, or null. Covers the
+ * 80%-case in React Native virtualized lists where `item` / `section` / `data`
+ * are passed through wrappers by reference — avoids a depth-3 DFS + fingerprint
+ * on the other 95% of props we don't care about.
+ */
+function findReferenceMatchAtTopLevel(
+  target: unknown,
+  container: Record<string, unknown>,
+): string | null {
+  // Primitives aren't uniquely identifiable by reference.
+  if (target === null || typeof target !== 'object') return null;
+  for (const key of Object.keys(container)) {
+    if (container[key] === target) return key;
+  }
   return null;
 }
 
@@ -140,29 +184,30 @@ function findMatchingPathInObject(
   currentPath: string[],
   depth: number,
   deadline: number,
+  cache: FpCache,
 ): { path: string[]; confidence: 'exact' | 'fingerprint-match' } | null {
   if (now() > deadline) return null;
   if (depth > SCAN_DEPTH) return null;
   if (container === null || typeof container !== 'object') return null;
 
   // Check the container itself first.
-  const selfMatch = valuesMatch(target, targetFp, container);
+  const selfMatch = valuesMatch(target, targetFp, container, cache);
   if (selfMatch) return { path: [...currentPath], confidence: selfMatch };
 
   if (Array.isArray(container)) {
     for (let i = 0; i < Math.min(container.length, 50); i++) {
       const child = container[i];
-      const directMatch = valuesMatch(target, targetFp, child);
+      const directMatch = valuesMatch(target, targetFp, child, cache);
       if (directMatch) return { path: [...currentPath, String(i)], confidence: directMatch };
-      const nested = findMatchingPathInObject(target, targetFp, child, [...currentPath, String(i)], depth + 1, deadline);
+      const nested = findMatchingPathInObject(target, targetFp, child, [...currentPath, String(i)], depth + 1, deadline, cache);
       if (nested) return nested;
     }
   } else {
     for (const key of Object.keys(container)) {
       const child = (container as Record<string, unknown>)[key];
-      const directMatch = valuesMatch(target, targetFp, child);
+      const directMatch = valuesMatch(target, targetFp, child, cache);
       if (directMatch) return { path: [...currentPath, key], confidence: directMatch };
-      const nested = findMatchingPathInObject(target, targetFp, child, [...currentPath, key], depth + 1, deadline);
+      const nested = findMatchingPathInObject(target, targetFp, child, [...currentPath, key], depth + 1, deadline, cache);
       if (nested) return nested;
     }
   }
@@ -230,6 +275,10 @@ export function resolveValueTrace(input: ValueTraceInput): Omit<ValueTrace, 'req
   const rootFp = valueFingerprint(rootValue);
   const fiberToNodeId = buildFiberToNodeIdMap();
   const rootComponentName = getComponentNameFromFiber(fiber) ?? 'Unknown';
+  // Per-resolve fingerprint cache — shared across every ancestor scan + store
+  // scan below. Objects encountered more than once (common on shared refs)
+  // fingerprint exactly once.
+  const fpCache: FpCache = new WeakMap();
 
   // 3. Emit consumer step.
   if (input.propPath) {
@@ -266,8 +315,23 @@ export function resolveValueTrace(input: ValueTraceInput): Omit<ValueTrace, 'req
       if (current.tag !== FIBER_TAG_CONTEXT_PROVIDER) {
         const props = current.memoizedProps;
         if (props) {
-          const match = findMatchingPathInObject(rootValue, rootFp, props, [], 0, deadline);
-          if (match) {
+          // Fast path: 80% of prop chains in RN virtualized lists pass the same
+          // reference through wrappers (item / section / data / children). Scan
+          // top-level keys for a `===` match before paying for a depth-3
+          // fingerprint DFS over the whole props object.
+          const refKey = findReferenceMatchAtTopLevel(rootValue, props);
+          let matchPath: string[] | null = refKey !== null ? [refKey] : null;
+          let matchConfidence: 'exact' | 'fingerprint-match' = 'exact';
+
+          if (matchPath === null) {
+            const match = findMatchingPathInObject(rootValue, rootFp, props, [], 0, deadline, fpCache);
+            if (match) {
+              matchPath = match.path;
+              matchConfidence = match.confidence;
+            }
+          }
+
+          if (matchPath !== null) {
             const ancestorNodeId = fiberToNodeId.get(current);
             const ancestorName = getComponentNameFromFiber(current) ?? 'Unknown';
             if (ancestorNodeId) {
@@ -275,8 +339,8 @@ export function resolveValueTrace(input: ValueTraceInput): Omit<ValueTrace, 'req
                 kind: 'prop',
                 nodeId: ancestorNodeId,
                 componentName: ancestorName,
-                propPath: match.path,
-                confidence: match.confidence,
+                propPath: matchPath,
+                confidence: matchConfidence,
               });
             }
           }
@@ -309,7 +373,7 @@ export function resolveValueTrace(input: ValueTraceInput): Omit<ValueTrace, 'req
   //    `derived` step so users see that the value is computed, not sourced.
   //    Users can then click-trace any dep to continue. Covers cases like
   //    `const fullName = useMemo(() => `${first} ${last}`, [first, last])`.
-  const derivedMatch = findDerivationMatch(fiber, rootValue, rootFp, rootComponentName);
+  const derivedMatch = findDerivationMatch(fiber, rootValue, rootFp, rootComponentName, fpCache);
   if (derivedMatch) {
     steps.push({ ...derivedMatch, nodeId: input.nodeId });
     // A derived value ends the chain for v1 — per-dep recursive tracing is
@@ -322,10 +386,10 @@ export function resolveValueTrace(input: ValueTraceInput): Omit<ValueTrace, 'req
   //    terminates the chain from the consumer's perspective; if a Provider
   //    fiber is in the ancestor path we further try to correlate the
   //    provider value to a store / API for the full chain.
-  const contextMatch = findContextMatch(fiber, rootValue, rootFp, fiberToNodeId);
+  const contextMatch = findContextMatch(fiber, rootValue, rootFp, fiberToNodeId, fpCache);
   if (contextMatch) {
     steps.push(contextMatch.step);
-    const providerStoreMatch = findStoreMatch(contextMatch.providerValue, valueFingerprint(contextMatch.providerValue), deadline);
+    const providerStoreMatch = findStoreMatch(contextMatch.providerValue, cachedFp(contextMatch.providerValue, fpCache), deadline, fpCache);
     if (providerStoreMatch) {
       steps.push({
         kind: 'store',
@@ -348,7 +412,7 @@ export function resolveValueTrace(input: ValueTraceInput): Omit<ValueTrace, 'req
   }
 
   // 7. Store match — Zustand, Redux, TanStack Query (first match wins).
-  const storeMatch = findStoreMatch(rootValue, rootFp, deadline);
+  const storeMatch = findStoreMatch(rootValue, rootFp, deadline, fpCache);
   if (storeMatch) {
     steps.push({
       kind: 'store',
@@ -390,13 +454,14 @@ function findContextMatch(
   target: unknown,
   targetFp: string,
   fiberToNodeId: Map<Fiber, string>,
+  cache: FpCache,
 ): ContextMatchResult | null {
   const deps = consumer.dependencies?.firstContext as FiberContextDep | null | undefined;
   if (!deps) return null;
 
   let dep: FiberContextDep | null = deps;
   while (dep) {
-    const match = valuesMatch(target, targetFp, dep.memoizedValue);
+    const match = valuesMatch(target, targetFp, dep.memoizedValue, cache);
     if (match) {
       const provider = findNearestProvider(consumer, dep.context);
       const step: Extract<TraceStep, { kind: 'context' }> = {
@@ -428,6 +493,7 @@ function findDerivationMatch(
   target: unknown,
   targetFp: string,
   componentName: string,
+  cache: FpCache,
 ): Extract<TraceStep, { kind: 'derived' }> | null {
   let hook: FiberHookState | null = fiber.memoizedState;
   let index = 0;
@@ -436,7 +502,7 @@ function findDerivationMatch(
     // useMemo / useCallback — memoizedState shape is [value, depsArray].
     if (Array.isArray(ms) && ms.length === 2 && Array.isArray(ms[1])) {
       const [computed, deps] = ms as [unknown, unknown[]];
-      const match = valuesMatch(target, targetFp, computed);
+      const match = valuesMatch(target, targetFp, computed, cache);
       if (match) {
         // Distinguish useCallback (computed is a function) from useMemo.
         const hookType: 'useMemo' | 'useCallback' =
@@ -496,11 +562,12 @@ function findStoreMatch(
   target: unknown,
   targetFp: string,
   deadline: number,
+  cache: FpCache,
 ): StoreMatchResult | null {
   // Zustand — iterate each named store.
   for (const [storeName, state] of getZustandSnapshot()) {
     if (now() > deadline) return null;
-    const hit = findMatchingPathInObject(target, targetFp, state, [], 0, deadline);
+    const hit = findMatchingPathInObject(target, targetFp, state, [], 0, deadline, cache);
     if (hit) {
       return {
         source: 'zustand',
@@ -516,7 +583,7 @@ function findStoreMatch(
   const redux = getReduxSnapshot();
   if (redux) {
     if (now() > deadline) return null;
-    const hit = findMatchingPathInObject(target, targetFp, redux, [], 0, deadline);
+    const hit = findMatchingPathInObject(target, targetFp, redux, [], 0, deadline, cache);
     if (hit) {
       return {
         source: 'redux',
@@ -531,7 +598,7 @@ function findStoreMatch(
   // TanStack Query — each query's data, keyed by hash.
   for (const [queryHash, entry] of getTanstackSnapshot()) {
     if (now() > deadline) return null;
-    const hit = findMatchingPathInObject(target, targetFp, entry.data, [], 0, deadline);
+    const hit = findMatchingPathInObject(target, targetFp, entry.data, [], 0, deadline, cache);
     if (hit) {
       return {
         source: 'tanstack-query',

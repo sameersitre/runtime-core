@@ -341,7 +341,51 @@ describe('resolveValueTrace', () => {
     expect(trace.error).toBe('value-not-found');
   });
 
-  // Case 10 — Derivation: value is the output of a useMemo on the same fiber.
+  // Case 10 — Deep ancestor chain (20 wrappers around a consumer), similar to
+  // React Native's VirtualizedList layers. Each wrapper holds a chunky props
+  // object so the DFS + fingerprint path gets exercised. Must complete within
+  // the 100ms budget with cache + reference fast-path enabled.
+  it('resolves a 20-layer RN-style wrapper chain without exceeding the budget', () => {
+    // Each wrapper has a "noise" prop (a fresh object different from target)
+    // so the reference fast-path on the pass-through key is what saves us
+    // (not DFS-ing sibling props).
+    const item = { id: 1, profile: { name: 'Jane' }, genre_ids: [1, 2, 3] };
+    const makeNoise = () => ({
+      a: { nested: { deep: 'value' } },
+      b: [1, 2, 3, 4, 5],
+      c: { x: 1, y: 2 },
+    });
+
+    // Build a chain of 20 ancestors, all passing `item` through by reference.
+    let parent: Fiber | null = null;
+    for (let i = 0; i < 20; i++) {
+      const fiber = makeFiber({
+        name: `Wrapper${i}`,
+        memoizedProps: { item, noise: makeNoise() },
+        parent,
+      });
+      mockFiberRefMap.set(`W${i}`, fiber);
+      parent = fiber;
+    }
+    // Leaf consumer — parent is the last wrapper.
+    const leaf = makeFiber({ name: 'RowCard', memoizedProps: { item }, parent });
+    mockFiberRefMap.set('RowCard', leaf);
+
+    const t0 = performance.now();
+    const trace = resolveValueTrace({ nodeId: 'RowCard', propPath: ['item'] });
+    const elapsed = performance.now() - t0;
+
+    expect(trace.error).toBeUndefined();
+    expect(trace.truncated).toBeUndefined(); // No budget trip.
+    // Consumer + every ancestor that has `item` in its props.
+    expect(trace.steps.length).toBe(21);
+    expect(trace.steps.every((s) => s.kind === 'prop')).toBe(true);
+    // Sanity: generous envelope — real wall-clock in CI should be under 20ms,
+    // but allow 200ms for slow CI runners.
+    expect(elapsed).toBeLessThan(200);
+  });
+
+  // Case 11 — Derivation: value is the output of a useMemo on the same fiber.
   it('emits a derived step when the traced value is the output of a useMemo', () => {
     const computed = { fullName: 'Jane Smith' };
     const deps = ['Jane', 'Smith'];
