@@ -100,6 +100,14 @@ let mutationUnsubscribe: (() => void) | null = null;
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 const DEBOUNCE_MS = 300;
 
+/**
+ * Live reference to the tracked QueryClient. Populated during install, cleared
+ * on uninstall. Used by the Value Lineage resolver to pull the **raw**
+ * query-cache data (not serialized) for reference-identity + fingerprint
+ * matching against component values.
+ */
+let trackedClient: TanStackQueryClientApi | null = null;
+
 // ============================================================================
 // Per-Query Tracking State (wasted refetch + timeline)
 // ============================================================================
@@ -193,6 +201,7 @@ export function installTanStackQueryTracker(
   console.log('[FloTrace] Installing TanStack Query tracker');
 
   try {
+    trackedClient = queryClient;
     const queryCache = queryClient.getQueryCache();
     const mutationCache = queryClient.getMutationCache();
     // Initialize tracking state for new queries only (preserve existing counts across reinstalls)
@@ -270,8 +279,33 @@ export function uninstallTanStackQueryTracker(): void {
 
   // Preserve queryTracking, mutationPrevStatus, completedCorrelations, and
   // mutationCorrelationMap across reinstalls — accumulated over the session.
+  trackedClient = null;
   isInstalled = false;
   console.log('[FloTrace] TanStack Query tracker uninstalled');
+}
+
+/**
+ * Snapshot of every cached query's **raw** data (not serialized) keyed by
+ * queryHash. Used by the Value Lineage resolver to match component values
+ * against TanStack Query cache via reference identity + structural fingerprint,
+ * and to pass raw references into `findFetchOrigin()`.
+ *
+ * Returns an empty map when the tracker isn't installed.
+ */
+export function getTanstackSnapshot(): Map<string, { queryKey: unknown[]; data: unknown }> {
+  const snapshot = new Map<string, { queryKey: unknown[]; data: unknown }>();
+  if (!trackedClient) return snapshot;
+  try {
+    const queryCache = trackedClient.getQueryCache();
+    for (const query of queryCache.getAll()) {
+      if (query.state.data !== undefined) {
+        snapshot.set(query.queryHash, { queryKey: query.queryKey, data: query.state.data });
+      }
+    }
+  } catch {
+    // QueryCache access threw — return whatever we've accumulated so far.
+  }
+  return snapshot;
 }
 
 // ============================================================================

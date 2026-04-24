@@ -46,6 +46,10 @@ export type {
   RuntimeValueTraceMessage,
 } from './types';
 
+// Value Lineage resolver
+export { resolveValueTrace } from './valueTraceResolver';
+export type { ValueTraceInput } from './valueTraceResolver';
+
 // Fiber tree walker
 export {
   installFiberTreeWalker,
@@ -77,18 +81,24 @@ export { inspectHooks } from './hookInspector';
 export { inspectEffects } from './effectInspector';
 
 // Store trackers
-export { installZustandTracker, uninstallZustandTracker } from './zustandTracker';
+export {
+  installZustandTracker,
+  uninstallZustandTracker,
+  getZustandSnapshot,
+} from './zustandTracker';
 export type { ZustandStoreApi } from './zustandTracker';
 export {
   installReduxTracker,
   uninstallReduxTracker,
   isReduxStore,
+  getReduxSnapshot,
 } from './reduxTracker';
 export type { ReduxStoreApi } from './reduxTracker';
 export {
   installTanStackQueryTracker,
   uninstallTanStackQueryTracker,
   isTanStackQueryClient,
+  getTanstackSnapshot,
 } from './tanstackQueryTracker';
 export type { TanStackQueryClientApi } from './tanstackQueryTracker';
 

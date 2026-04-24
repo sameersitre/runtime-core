@@ -31,6 +31,14 @@ const debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const DEBOUNCE_MS = 200;
 
 /**
+ * Live references to tracked stores, keyed by storeName. Populated during install,
+ * cleared on uninstall. Used by the value trace resolver (same package) to pull
+ * the **raw** current state (not serialized) for reference-identity comparison
+ * against component values in `findFetchOrigin()` / `valueFingerprint()`.
+ */
+const trackedStores = new Map<string, ZustandStoreApi>();
+
+/**
  * Install Zustand store tracking.
  * Subscribes to each store and sends runtime:zustand messages on state change.
  */
@@ -65,6 +73,8 @@ export function installZustandTracker(
 
     // Per-store try-catch so one bad store doesn't prevent tracking the others
     try {
+      trackedStores.set(storeName, store);
+
       // Send initial state snapshot immediately
       const initialState = store.getState();
       sendStoreUpdate(storeName, initialState, Object.keys(initialState), client);
@@ -107,8 +117,30 @@ export function uninstallZustandTracker(): void {
   }
 
   activeUnsubscribers = [];
+  trackedStores.clear();
   isInstalled = false;
   console.log('[FloTrace] Zustand tracker uninstalled');
+}
+
+/**
+ * Snapshot of every tracked Zustand store's current **raw** state (not
+ * serialized). Used by the Value Lineage resolver to match component values
+ * against store keys via reference identity + structural fingerprint, and to
+ * pass raw object references into `findFetchOrigin()` for API correlation.
+ *
+ * Returns a fresh map on each call — does not cache. Cheap because `.getState()`
+ * is O(1) on Zustand.
+ */
+export function getZustandSnapshot(): Map<string, Record<string, unknown>> {
+  const snapshot = new Map<string, Record<string, unknown>>();
+  for (const [name, store] of trackedStores) {
+    try {
+      snapshot.set(name, store.getState());
+    } catch {
+      // Skip stores whose getState throws — keep the rest.
+    }
+  }
+  return snapshot;
 }
 
 /**

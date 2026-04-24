@@ -78,7 +78,7 @@ export function valueFingerprint(value: unknown, depth = 0): string {
  * Returns true if this value is complex enough to safely flag renames.
  * Primitives have too high a coincidence rate (e.g., count=5 at parent and child).
  */
-function shouldFlagRename(value: unknown): boolean {
+export function shouldFlagRename(value: unknown): boolean {
   if (value === null || value === undefined) return false;
   if (typeof value !== 'object') return false;
   if (Array.isArray(value) && (value as unknown[]).length === 0) return false;

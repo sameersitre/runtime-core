@@ -31,6 +31,13 @@ let previousState: Record<string, unknown> | null = null;
 const DEBOUNCE_MS = 200;
 
 /**
+ * Live reference to the tracked Redux store. Populated during install, cleared
+ * on uninstall. Used by the Value Lineage resolver to pull the raw current
+ * state for reference-identity + fingerprint matching.
+ */
+let trackedStore: ReduxStoreApi | null = null;
+
+/**
  * Validate that an object looks like a Redux store.
  * Checks for getState, subscribe, and dispatch as functions.
  */
@@ -61,6 +68,7 @@ export function installReduxTracker(
   console.log('[FloTrace] Installing Redux tracker');
 
   try {
+    trackedStore = store;
     // Capture initial state
     const initialState = store.getState();
     previousState = initialState;
@@ -102,8 +110,22 @@ export function uninstallReduxTracker(): void {
   }
 
   previousState = null;
+  trackedStore = null;
   isInstalled = false;
   console.log('[FloTrace] Redux tracker uninstalled');
+}
+
+/**
+ * Current raw Redux state, or null when the tracker isn't installed. Used by
+ * the Value Lineage resolver.
+ */
+export function getReduxSnapshot(): Record<string, unknown> | null {
+  if (!trackedStore) return null;
+  try {
+    return trackedStore.getState();
+  } catch {
+    return null;
+  }
 }
 
 /**
