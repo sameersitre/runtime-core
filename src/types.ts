@@ -808,10 +808,21 @@ export type TraceStep =
       expired?: boolean;
     }
   | {
-      // v2+ — present here so wire-format is forward-compatible.
       kind: 'context';
       contextName: string;
       providerNodeId?: string;
+      confidence: TraceConfidence;
+    }
+  | {
+      /** Value is the cached result of a useMemo/useCallback on the same fiber.
+       *  `depCount` tells the UI how many upstream inputs the memo depends on
+       *  (one of which the user may want to click-trace next). */
+      kind: 'derived';
+      nodeId: string;
+      componentName: string;
+      hookIndex: number;
+      hookType: 'useMemo' | 'useCallback';
+      depCount: number;
       confidence: TraceConfidence;
     };
 

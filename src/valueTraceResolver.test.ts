@@ -340,4 +340,36 @@ describe('resolveValueTrace', () => {
     const trace = resolveValueTrace({ nodeId: 'X', propPath: ['a', 'missing'] });
     expect(trace.error).toBe('value-not-found');
   });
+
+  // Case 10 — Derivation: value is the output of a useMemo on the same fiber.
+  it('emits a derived step when the traced value is the output of a useMemo', () => {
+    const computed = { fullName: 'Jane Smith' };
+    const deps = ['Jane', 'Smith'];
+    // Simulate a fiber with one hook whose memoizedState is [computed, deps]
+    // (React's internal shape for useMemo).
+    const fiber = makeFiber({
+      name: 'NameBadge',
+      memoizedProps: { label: computed },
+      memoizedState: {
+        memoizedState: [computed, deps],
+        next: null,
+      },
+    });
+    mockFiberRefMap.set('NameBadge', fiber);
+
+    const trace = resolveValueTrace({ nodeId: 'NameBadge', propPath: ['label'] });
+
+    expect(trace.error).toBeUndefined();
+    const kinds = trace.steps.map((s) => s.kind);
+    // Consumer prop + derived terminal step (no further ancestry walk).
+    expect(kinds).toEqual(['prop', 'derived']);
+    const derived = trace.steps[1];
+    expect(derived).toMatchObject({
+      kind: 'derived',
+      hookIndex: 0,
+      hookType: 'useMemo',
+      depCount: 2,
+      confidence: 'exact',
+    });
+  });
 });

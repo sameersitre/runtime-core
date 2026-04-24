@@ -304,6 +304,19 @@ export function resolveValueTrace(input: ValueTraceInput): Omit<ValueTrace, 'req
     }
   }
 
+  // 5.5 Derivation match — when the root is a prop whose value is the cached
+  //    output of a useMemo/useCallback on the *consumer* fiber itself, emit a
+  //    `derived` step so users see that the value is computed, not sourced.
+  //    Users can then click-trace any dep to continue. Covers cases like
+  //    `const fullName = useMemo(() => `${first} ${last}`, [first, last])`.
+  const derivedMatch = findDerivationMatch(fiber, rootValue, rootFp, rootComponentName);
+  if (derivedMatch) {
+    steps.push({ ...derivedMatch, nodeId: input.nodeId });
+    // A derived value ends the chain for v1 — per-dep recursive tracing is
+    // a future slice. User can click any hook/prop dep to start a new trace.
+    return { ...base, steps, resolvedAtMs: now() };
+  }
+
   // 6. Context match — walk fiber.dependencies (React 18+) for a context
   //    whose memoizedValue matches the target. Emits a context step that
   //    terminates the chain from the consumer's perspective; if a Provider
@@ -396,6 +409,55 @@ function findContextMatch(
       return { step, providerValue };
     }
     dep = dep.next;
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Derivation match — useMemo / useCallback on the consumer fiber
+// ---------------------------------------------------------------------------
+
+/**
+ * Scan the fiber's hook linked list for a useMemo/useCallback whose cached
+ * `computedValue` matches the target. React stores these as
+ * `memoizedState = [computedValue, deps]` on the hook node.
+ * Returns a `derived` step when matched.
+ */
+function findDerivationMatch(
+  fiber: Fiber,
+  target: unknown,
+  targetFp: string,
+  componentName: string,
+): Extract<TraceStep, { kind: 'derived' }> | null {
+  let hook: FiberHookState | null = fiber.memoizedState;
+  let index = 0;
+  while (hook) {
+    const ms = hook.memoizedState;
+    // useMemo / useCallback — memoizedState shape is [value, depsArray].
+    if (Array.isArray(ms) && ms.length === 2 && Array.isArray(ms[1])) {
+      const [computed, deps] = ms as [unknown, unknown[]];
+      const match = valuesMatch(target, targetFp, computed);
+      if (match) {
+        // Distinguish useCallback (computed is a function) from useMemo.
+        const hookType: 'useMemo' | 'useCallback' =
+          typeof computed === 'function' ? 'useCallback' : 'useMemo';
+        // nodeId is the walker's id for this fiber; use consumer's nodeId from
+        // the resolver's caller context by reverse lookup at call-site. Here we
+        // return without nodeId — caller fills it in since we don't have the
+        // fiberToNodeId map in scope. Keep function signature narrow.
+        return {
+          kind: 'derived',
+          nodeId: '',
+          componentName,
+          hookIndex: index,
+          hookType,
+          depCount: deps.length,
+          confidence: match,
+        };
+      }
+    }
+    hook = hook.next;
+    index++;
   }
   return null;
 }
