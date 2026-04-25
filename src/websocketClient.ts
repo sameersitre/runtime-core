@@ -84,6 +84,7 @@ export class FloTraceWebSocketClient {
           frameworkName: this.config.frameworkName,
           frameworkVersion: this.config.frameworkVersion,
           reactNativeVersion: this.config.reactNativeVersion,
+          runtimeVersion: this.config.runtimeVersion,
         });
 
         // Flush any queued messages

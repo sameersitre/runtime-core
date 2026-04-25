@@ -75,6 +75,13 @@ export interface RuntimeReadyMessage {
   /** React Native version from `Platform.constants.reactNativeVersion`, formatted
    *  as "major.minor.patch". Native-only; web adapter leaves this undefined. */
   reactNativeVersion?: string;
+  /** Version of the @flotrace/runtime or @flotrace/runtime-native package the
+   *  user installed in their app. Lets the desktop diagnose runtime/desktop
+   *  drift (e.g., user pinned an older runtime that lacks a new feature).
+   *  Read from the adapter's own package.json at build time. The lockstep
+   *  release script keeps runtime-core pinned identically, so a separate
+   *  core-version field would be redundant. */
+  runtimeVersion?: string;
 }
 
 export interface RuntimeRenderMessage {
@@ -980,6 +987,10 @@ export interface FloTraceConfig {
   /** React Native version from `Platform.constants.reactNativeVersion`, formatted
    *  "major.minor.patch". Native adapter only. */
   reactNativeVersion?: string;
+  /** Version of the active runtime adapter (`@flotrace/runtime` on web,
+   *  `@flotrace/runtime-native` on RN). Adapters auto-populate from their
+   *  own package.json. Surfaced on `runtime:ready` for diagnostics. */
+  runtimeVersion?: string;
 }
 
 /** Keys that stay optional in DEFAULT_CONFIG. These are populated by adapters (web/native)
@@ -995,7 +1006,8 @@ type OptionalConfigKeys =
   | 'userAllowPatterns'
   | 'frameworkName'
   | 'frameworkVersion'
-  | 'reactNativeVersion';
+  | 'reactNativeVersion'
+  | 'runtimeVersion';
 
 export type ResolvedFloTraceConfig = Required<Omit<FloTraceConfig, OptionalConfigKeys>> &
   Pick<FloTraceConfig, OptionalConfigKeys>;
