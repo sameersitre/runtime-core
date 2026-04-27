@@ -228,6 +228,51 @@ function buildFiberToNodeIdMap(): Map<Fiber, string> {
 }
 
 // ---------------------------------------------------------------------------
+// Primitive retreat
+// ---------------------------------------------------------------------------
+
+/**
+ * Retreat a primitive root value up its propPath to the deepest enclosing
+ * object on the same fiber's props.
+ *
+ * Why: `valuesMatch` refuses primitives to avoid false positives like
+ * `count: 5` colliding across unrelated sites. The deepest enclosing object
+ * IS preserved by reference through the drill chain, so we anchor the
+ * ancestor search on it and remember the trailing segments so each emitted
+ * step can show the full original path back to the primitive.
+ *
+ * Returns the input unchanged if the target is already an object, the path
+ * is too short to retreat, or no enclosing object exists on memoizedProps.
+ *
+ * Pure: only reads `fiber.memoizedProps`.
+ */
+function retreatToEnclosingObject(
+  fiber: Fiber,
+  propPath: readonly string[],
+  rootValue: unknown,
+): { rootValue: unknown; trailingSubPath: string[] } {
+  const isObject = rootValue !== null && typeof rootValue === 'object';
+  if (isObject || propPath.length <= 1 || !fiber.memoizedProps) {
+    return { rootValue, trailingSubPath: [] };
+  }
+
+  let path: string[] = propPath.slice();
+  let value: unknown = rootValue;
+  const trail: string[] = [];
+
+  while (path.length > 1 && (value === null || typeof value !== 'object')) {
+    trail.unshift(path[path.length - 1]);
+    path = path.slice(0, -1);
+    value = walkPath(fiber.memoizedProps, path);
+  }
+
+  if (value === null || typeof value !== 'object') {
+    return { rootValue, trailingSubPath: [] };
+  }
+  return { rootValue: value, trailingSubPath: trail };
+}
+
+// ---------------------------------------------------------------------------
 // Main entry point
 // ---------------------------------------------------------------------------
 
@@ -271,6 +316,15 @@ export function resolveValueTrace(input: ValueTraceInput): Omit<ValueTrace, 'req
   if (rootValue === undefined) {
     return { ...base, error: 'value-not-found', resolvedAtMs: now() };
   }
+
+  // Primitives can't be reference-matched in ancestor props — retreat to the
+  // deepest enclosing object and remember the trailing segments so emitted
+  // steps still display the full path. See retreatToEnclosingObject for why.
+  const retreated = input.propPath
+    ? retreatToEnclosingObject(fiber, input.propPath, rootValue)
+    : { rootValue, trailingSubPath: [] as string[] };
+  rootValue = retreated.rootValue;
+  const trailingSubPath = retreated.trailingSubPath;
 
   const rootFp = valueFingerprint(rootValue);
   const fiberToNodeId = buildFiberToNodeIdMap();
@@ -339,9 +393,30 @@ export function resolveValueTrace(input: ValueTraceInput): Omit<ValueTrace, 'req
                 kind: 'prop',
                 nodeId: ancestorNodeId,
                 componentName: ancestorName,
-                propPath: matchPath,
+                propPath: trailingSubPath.length > 0 ? [...matchPath, ...trailingSubPath] : matchPath,
                 confidence: matchConfidence,
               });
+            }
+          } else {
+            // No prop match here — but the value may live in this fiber's hook
+            // state (useState/useReducer is the source of the drill). When found,
+            // terminate the chain — we've reached the origin.
+            const hookMatch = findMatchingHookState(current, rootValue, rootFp, fpCache);
+            if (hookMatch) {
+              const ancestorNodeId = fiberToNodeId.get(current);
+              const ancestorName = getComponentNameFromFiber(current) ?? 'Unknown';
+              if (ancestorNodeId) {
+                steps.push({
+                  kind: 'hook-state',
+                  nodeId: ancestorNodeId,
+                  componentName: ancestorName,
+                  hookIndex: hookMatch.hookIndex,
+                  hookType: hookMatch.hookType,
+                  subPath: trailingSubPath.length > 0 ? trailingSubPath : undefined,
+                  confidence: hookMatch.confidence,
+                });
+                return { ...base, steps, resolvedAtMs: now() };
+              }
             }
           }
         }
@@ -520,6 +595,45 @@ function findDerivationMatch(
           depCount: deps.length,
           confidence: match,
         };
+      }
+    }
+    hook = hook.next;
+    index++;
+  }
+  return null;
+}
+
+/**
+ * Scan a fiber's hook linked list for a useState/useReducer hook whose stored
+ * value matches the target. Skips useMemo/useCallback (their `[value, deps]`
+ * tuple shape is owned by `findDerivationMatch`) and skips effect/ref hooks
+ * (different memoizedState shapes that can't carry user state). Used to
+ * terminate the prop-drill chain at the source fiber where a useState lives
+ * but no incoming prop carries the value.
+ */
+function findMatchingHookState(
+  fiber: Fiber,
+  target: unknown,
+  targetFp: string,
+  cache: FpCache,
+): { hookIndex: number; hookType: 'useState' | 'unknown'; confidence: 'exact' | 'fingerprint-match' } | null {
+  let hook: FiberHookState | null = fiber.memoizedState;
+  let index = 0;
+  while (hook) {
+    const ms = hook.memoizedState;
+    // Skip useMemo/useCallback ([value, depsArray]) — owned by findDerivationMatch.
+    const isMemoTuple = Array.isArray(ms) && ms.length === 2 && Array.isArray(ms[1]);
+    // Skip useEffect/useLayoutEffect ({ tag, create, destroy, deps, next }).
+    const isEffectShape =
+      ms !== null && typeof ms === 'object' && 'create' in (ms as object) && 'deps' in (ms as object);
+    // Skip useRef ({ current }) — refs don't drive prop flow.
+    const isRefShape =
+      ms !== null && typeof ms === 'object' && Object.keys(ms as object).length === 1 && 'current' in (ms as object);
+
+    if (!isMemoTuple && !isEffectShape && !isRefShape) {
+      const match = valuesMatch(target, targetFp, ms, cache);
+      if (match) {
+        return { hookIndex: index, hookType: 'useState', confidence: match };
       }
     }
     hook = hook.next;

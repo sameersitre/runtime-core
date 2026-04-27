@@ -1018,9 +1018,15 @@ export type ResolvedFloTraceConfig = Required<Omit<FloTraceConfig, OptionalConfi
 export const DEFAULT_CONFIG: ResolvedFloTraceConfig = {
   port: 3457,
   appName: 'React App',
+  // Default-on unless an explicit `process.env.NODE_ENV === 'production'` is
+  // detected. The previous heuristic (`=== 'development'`) silently disabled
+  // the runtime in any browser context that doesn't shim `process` (e.g. Vite,
+  // Webpack 5 with `node: false`, Rsbuild) — making the README quickstart fail
+  // for everyone. Production safety is handled by users gating the import via
+  // the dynamic-import pattern documented in the runtime READMEs.
   enabled:
     (globalThis as { process?: { env?: { NODE_ENV?: string } } }).process?.env
-      ?.NODE_ENV === 'development',
+      ?.NODE_ENV !== 'production',
   autoReconnect: true,
   reconnectInterval: 2000,
   trackAllRenders: true,
