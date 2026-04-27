@@ -273,6 +273,87 @@ function retreatToEnclosingObject(
 }
 
 // ---------------------------------------------------------------------------
+// Origin retreat through a store keyPath
+// ---------------------------------------------------------------------------
+
+/**
+ * Read the dev-time debug flag without crashing on SSR/strict-CSP. Mirrors
+ * the convention in fiberTreeWalker.ts — users set
+ * `window.__FLOTRACE_DEBUG__ = true` to opt in to verbose console output.
+ */
+function isDebugEnabled(): boolean {
+  try {
+    return !!(globalThis as unknown as { __FLOTRACE_DEBUG__?: boolean }).__FLOTRACE_DEBUG__;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Walk a store match's keyPath from root to leaf *once*, collecting
+ * intermediate object references, then scan those refs deepest-first for a
+ * fetch-origin tag. O(n) on path depth instead of the naive O(n²) re-walk.
+ *
+ * Why deepest-first: the registry already does a depth-limited DFS *into* a
+ * value, so calling on the deepest object first surfaces the most-specific
+ * (closest) tagged ancestor when nested fetches tag overlapping subtrees.
+ *
+ * Always passes `ignoreTTL: true` — only reachable from the value-lineage
+ * resolver, which wants the causal origin regardless of age. Network-panel
+ * callers stay on the TTL-respecting default.
+ */
+function findFetchOriginUpKeyPath(
+  stateRoot: unknown,
+  keyPath: readonly string[],
+): string | undefined {
+  // --- Single forward pass: collect every ancestor along the keyPath ---
+  const ancestors: unknown[] = [stateRoot];
+  let cursor: unknown = stateRoot;
+  for (const segment of keyPath) {
+    if (cursor === null || typeof cursor !== 'object') break;
+    cursor = (cursor as Record<string, unknown>)[segment];
+    ancestors.push(cursor);
+  }
+
+  // --- Scan deepest-first ---
+  for (let i = ancestors.length - 1; i >= 0; i--) {
+    const value = ancestors[i];
+    if (value === null || typeof value !== 'object') continue;
+    const rid = findFetchOrigin(value, { ignoreTTL: true });
+    if (rid) {
+      if (isDebugEnabled()) {
+        // eslint-disable-next-line no-console
+        console.debug('[FloTrace] origin via keyPath retreat', {
+          keyPath,
+          depthHit: i,
+          requestId: rid,
+        });
+      }
+      return rid;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Resolve a fetch origin for a store match: try the matched leaf first
+ * (preserves the natural keyPath when the leaf itself is tagged), then
+ * retreat up the keyPath looking for a tagged ancestor. Centralises the
+ * pattern previously duplicated across the context-store and direct-store
+ * branches in `resolveValueTrace`.
+ */
+function resolveOriginViaTagOrKeyPath(
+  matchedValue: unknown,
+  stateRoot: unknown,
+  keyPath: readonly string[],
+): string | undefined {
+  return (
+    findFetchOrigin(matchedValue, { ignoreTTL: true }) ??
+    findFetchOriginUpKeyPath(stateRoot, keyPath)
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main entry point
 // ---------------------------------------------------------------------------
 
@@ -430,7 +511,9 @@ export function resolveValueTrace(input: ValueTraceInput): Omit<ValueTrace, 'req
   //    useState/useReducer fed directly by fetch response (TanStack Query,
   //    SWR, vanilla useState).
   if (input.hookPath) {
-    const origin = findFetchOrigin(rootValue);
+    // ignoreTTL: value-lineage wants the causal origin even if the user opens
+    // the panel minutes after the fetch. UI flags age via the `expired` chip.
+    const origin = findFetchOrigin(rootValue, { ignoreTTL: true });
     if (origin) {
       steps.push({
         kind: 'api',
@@ -473,12 +556,18 @@ export function resolveValueTrace(input: ValueTraceInput): Omit<ValueTrace, 'req
         keyPath: providerStoreMatch.keyPath,
         confidence: providerStoreMatch.confidence,
       });
-      const origin = findFetchOrigin(providerStoreMatch.matchedValue);
+      const origin = resolveOriginViaTagOrKeyPath(
+        providerStoreMatch.matchedValue,
+        providerStoreMatch.stateRoot,
+        providerStoreMatch.keyPath,
+      );
       if (origin) {
         steps.push({ kind: 'api', requestId: origin, method: 'UNKNOWN', urlPath: '', ageMs: 0 });
       }
     } else {
-      const origin = findFetchOrigin(contextMatch.providerValue);
+      // Provider value came from fiber props, not a store — no keyPath to
+      // retreat through. Just try the value itself.
+      const origin = findFetchOrigin(contextMatch.providerValue, { ignoreTTL: true });
       if (origin) {
         steps.push({ kind: 'api', requestId: origin, method: 'UNKNOWN', urlPath: '', ageMs: 0 });
       }
@@ -497,8 +586,15 @@ export function resolveValueTrace(input: ValueTraceInput): Omit<ValueTrace, 'req
       confidence: storeMatch.confidence,
     });
 
-    // 8. Store → API match.
-    const origin = findFetchOrigin(storeMatch.matchedValue);
+    // 8. Store → API match. Direct first; if the matched value is a
+    //    primitive or below tag depth, retreat through the store keyPath
+    //    until a tagged ancestor surfaces. This is the headline fix for
+    //    "trace stops at Redux on primitive props".
+    const origin = resolveOriginViaTagOrKeyPath(
+      storeMatch.matchedValue,
+      storeMatch.stateRoot,
+      storeMatch.keyPath,
+    );
     if (origin) {
       steps.push({
         kind: 'api',
@@ -670,6 +766,13 @@ interface StoreMatchResult {
   keyPath: string[];
   confidence: 'exact' | 'fingerprint-match';
   matchedValue: unknown;
+  /**
+   * Snapshot root that was scanned to produce this match. Threaded out so
+   * `findFetchOriginUpKeyPath` can retreat through ancestor objects when
+   * `matchedValue` is a primitive (or a leaf below the registry's tag depth)
+   * to find a tagged enclosing object that carries the API origin.
+   */
+  stateRoot: unknown;
 }
 
 function findStoreMatch(
@@ -689,6 +792,7 @@ function findStoreMatch(
         keyPath: hit.path,
         confidence: hit.confidence,
         matchedValue: walkPath(state, hit.path),
+        stateRoot: state,
       };
     }
   }
@@ -705,11 +809,14 @@ function findStoreMatch(
         keyPath: hit.path,
         confidence: hit.confidence,
         matchedValue: walkPath(redux, hit.path),
+        stateRoot: redux,
       };
     }
   }
 
-  // TanStack Query — each query's data, keyed by hash.
+  // TanStack Query — each query's data, keyed by hash. The per-query data
+  // envelope is the right retreat root: we want to walk up *within* one
+  // fetch's response, not across queries.
   for (const [queryHash, entry] of getTanstackSnapshot()) {
     if (now() > deadline) return null;
     const hit = findMatchingPathInObject(target, targetFp, entry.data, [], 0, deadline, cache);
@@ -720,6 +827,7 @@ function findStoreMatch(
         keyPath: hit.path,
         confidence: hit.confidence,
         matchedValue: walkPath(entry.data, hit.path),
+        stateRoot: entry.data,
       };
     }
   }

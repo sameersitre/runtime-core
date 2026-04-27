@@ -6,7 +6,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { Fiber } from './fiberTreeWalker';
-import { tagFetchData, clearFetchOriginTags } from './fetchOriginRegistry';
+import { tagFetchData, clearFetchOriginTags, findFetchOrigin } from './fetchOriginRegistry';
 
 // ---- Mocks --------------------------------------------------------------
 
@@ -415,5 +415,109 @@ describe('resolveValueTrace', () => {
       depCount: 2,
       confidence: 'exact',
     });
+  });
+
+  // Case 12 — keyPath retreat recovers the api origin when the matched value
+  // itself isn't tagged but an ancestor in the store keyPath is.
+  //
+  // Real-world analogue: a reducer normalizes the response into an entity
+  // dictionary — `state.byId[k] = response.user` keeps the ancestor reference
+  // (and its tag) but the leaf row is a fresh adapter-produced object. The
+  // store match lands on the untagged leaf; before the fix, the chain stopped
+  // at the store step.
+  //
+  // We model that gap by tagging an empty wrapper and then assigning a fresh
+  // (untagged) leaf into it — same shape, no recursive re-tagging.
+  it('recovers api origin via keyPath retreat when matched value itself is not tagged', () => {
+    const wrapper = {} as { leaf?: { name: string } };
+    tagFetchData(wrapper, 'req-deep'); // tags the wrapper only (no children yet)
+    const leaf = { name: 'Jane' };
+    wrapper.leaf = leaf; // assigned after tagging — leaf has no tag of its own
+    mockZustandSnapshot.set('feed', wrapper);
+
+    const fiber = makeFiber({ name: 'Leaf', memoizedProps: { item: leaf } });
+    mockFiberRefMap.set('Leaf', fiber);
+
+    const trace = resolveValueTrace({ nodeId: 'Leaf', propPath: ['item'] });
+
+    expect(trace.error).toBeUndefined();
+    const kinds = trace.steps.map((s) => s.kind);
+    expect(kinds).toContain('store');
+    expect(kinds).toContain('api');
+    const apiStep = trace.steps.find((s) => s.kind === 'api');
+    expect(apiStep).toMatchObject({ kind: 'api', requestId: 'req-deep' });
+  });
+
+  // Case 13 — depth-4 response shape in Redux. Confirms the depth bump from
+  // 2 → 4 in tagFetchData/findFetchOrigin actually reaches the leaf object.
+  it('finds api origin on depth-4 response shapes', () => {
+    const item = { id: 1, name: 'first' };
+    const response = { data: { items: [item] } };
+    tagFetchData(response, 'req-88');
+    mockReduxSnapshot = { feed: response };
+
+    // Consumer receives the row object directly.
+    const fiber = makeFiber({ name: 'Row', memoizedProps: { item } });
+    mockFiberRefMap.set('Row', fiber);
+
+    const trace = resolveValueTrace({ nodeId: 'Row', propPath: ['item'] });
+
+    expect(trace.error).toBeUndefined();
+    const kinds = trace.steps.map((s) => s.kind);
+    expect(kinds).toEqual(['prop', 'store', 'api']);
+    const apiStep = trace.steps[2];
+    expect(apiStep).toMatchObject({ kind: 'api', requestId: 'req-88' });
+  });
+
+  // Case 14 — TTL bypass: resolver still emits the api step minutes after the
+  // fetch resolved, while the TTL-respecting findFetchOrigin (used by the
+  // network panel) correctly returns undefined. Proves the split-TTL design.
+  it('keeps emitting the api step after the TTL has elapsed (resolver) while default findFetchOrigin expires', () => {
+    vi.useFakeTimers();
+    try {
+      const userObj = { id: 1, email: 'j@x.com' };
+      const storeState = { user: userObj };
+      tagFetchData(userObj, 'req-ttl');
+      mockZustandSnapshot.set('authStore', storeState);
+
+      const fiber = makeFiber({ name: 'Profile', memoizedProps: { user: userObj } });
+      mockFiberRefMap.set('Profile', fiber);
+
+      // Move time past the 3 s TTL.
+      vi.advanceTimersByTime(5_000);
+
+      const trace = resolveValueTrace({ nodeId: 'Profile', propPath: ['user'] });
+
+      const kinds = trace.steps.map((s) => s.kind);
+      expect(kinds).toContain('api');
+      const apiStep = trace.steps.find((s) => s.kind === 'api');
+      expect(apiStep).toMatchObject({ kind: 'api', requestId: 'req-ttl' });
+
+      // Sibling assertion: the default (TTL-respecting) findFetchOrigin
+      // returns undefined for the same object — network panel correlation
+      // continues to time out as before.
+      expect(findFetchOrigin(userObj)).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // Case 15 — keyPath retreat must NOT fabricate an api step when no ancestor
+  // is tagged. The chain should end at the store step and stay honest.
+  it('does not invent an api step when no ancestor in the store keyPath is tagged', () => {
+    const userObj = { id: 1, name: 'Jane' };
+    // No tagFetchData call — store has the data but it never came from a
+    // tracked fetch (e.g. seeded from localStorage or a server-side prop).
+    mockZustandSnapshot.set('userStore', { user: userObj });
+
+    // Consumer holds the object directly so findStoreMatch fires.
+    const fiber = makeFiber({ name: 'Header', memoizedProps: { user: userObj } });
+    mockFiberRefMap.set('Header', fiber);
+
+    const trace = resolveValueTrace({ nodeId: 'Header', propPath: ['user'] });
+
+    const kinds = trace.steps.map((s) => s.kind);
+    expect(kinds).toContain('store');
+    expect(kinds).not.toContain('api');
   });
 });
