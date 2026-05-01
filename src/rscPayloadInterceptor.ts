@@ -40,6 +40,10 @@ function extractRoute(url: string): string {
 let originalFetch: typeof fetch | null = null;
 let interceptorClient: FloTraceWebSocketClient | null = null;
 let isInstalled = false;
+/** Sentinel reference to our installed wrapper, so a sibling patch
+ *  (e.g. networkTracker) tearing down between our install/uninstall doesn't
+ *  cause us to overwrite the native fetch with a stale closure. */
+let patchedFetchRef: typeof fetch | null = null;
 
 /**
  * Install the RSC payload interceptor.
@@ -52,7 +56,7 @@ export function installRscPayloadInterceptor(client: FloTraceWebSocketClient): v
 
   originalFetch = globalThis.fetch;
 
-  globalThis.fetch = async function patchedFetch(
+  const patchedFetch = async function patchedFetch(
     input: RequestInfo | URL,
     init?: RequestInit,
   ): Promise<Response> {
@@ -85,13 +89,21 @@ export function installRscPayloadInterceptor(client: FloTraceWebSocketClient): v
 
     return response;
   };
+
+  patchedFetchRef = patchedFetch;
+  globalThis.fetch = patchedFetch;
 }
 
 /** Remove the RSC payload interceptor and restore original fetch */
 export function uninstallRscPayloadInterceptor(): void {
   if (!isInstalled || !originalFetch) return;
-  globalThis.fetch = originalFetch;
+  // Only restore if our wrapper is still installed — otherwise a sibling
+  // patch (networkTracker) is on top of us and we'd be stomping its install.
+  if (globalThis.fetch === patchedFetchRef) {
+    globalThis.fetch = originalFetch;
+  }
   originalFetch = null;
+  patchedFetchRef = null;
   interceptorClient = null;
   isInstalled = false;
 }

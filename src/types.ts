@@ -885,7 +885,7 @@ export const DEFAULT_CONFIG: ResolvedFloTraceConfig = {
   appName: 'React App',
   enabled:
     (globalThis as { process?: { env?: { NODE_ENV?: string } } }).process?.env
-      ?.NODE_ENV === 'development',
+      ?.NODE_ENV !== 'production',
   autoReconnect: true,
   reconnectInterval: 2000,
   trackAllRenders: true,
