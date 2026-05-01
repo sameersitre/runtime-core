@@ -56,6 +56,14 @@ export function installRscPayloadInterceptor(client: FloTraceWebSocketClient): v
 
   originalFetch = globalThis.fetch;
 
+  // Capture into closure consts. The wrapper must keep working even after
+  // uninstall has nulled the module-level lets — that happens whenever a
+  // sibling patch (networkTracker) is chained on top of us and uninstalls
+  // *after* us; the still-chained outer wrapper will restore us as
+  // globalThis.fetch and call us, so our own closure must survive.
+  const capturedOriginalFetch = originalFetch;
+  const capturedClient = client;
+
   const patchedFetch = async function patchedFetch(
     input: RequestInfo | URL,
     init?: RequestInit,
@@ -68,14 +76,17 @@ export function installRscPayloadInterceptor(client: FloTraceWebSocketClient): v
     const isRscRequest = RSC_URL_PATTERNS.some(p => p.test(url));
 
     // Always call the original fetch — we never block requests
-    const response = await originalFetch!.call(globalThis, input, init);
+    const response = await capturedOriginalFetch.call(globalThis, input, init);
 
-    if (isRscRequest && interceptorClient?.connected) {
+    // After uninstall the module-level `interceptorClient` is null, so we
+    // gate the send on it — but `capturedOriginalFetch` always works, so the
+    // pass-through path stays correct even post-uninstall.
+    if (isRscRequest && interceptorClient === capturedClient && capturedClient.connected) {
       try {
         const sizeHeader = response.headers.get('content-length');
         const payloadSizeBytes = sizeHeader ? parseInt(sizeHeader, 10) : 0;
 
-        interceptorClient.send({
+        capturedClient.send({
           type: 'runtime:rscPayload',
           route: extractRoute(url),
           payloadSizeBytes: isNaN(payloadSizeBytes) ? 0 : payloadSizeBytes,
@@ -99,6 +110,8 @@ export function uninstallRscPayloadInterceptor(): void {
   if (!isInstalled || !originalFetch) return;
   // Only restore if our wrapper is still installed — otherwise a sibling
   // patch (networkTracker) is on top of us and we'd be stomping its install.
+  // The wrapper itself closes over its own copy of originalFetch + client,
+  // so it keeps working even though we null the module-level refs below.
   if (globalThis.fetch === patchedFetchRef) {
     globalThis.fetch = originalFetch;
   }
