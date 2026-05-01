@@ -219,6 +219,10 @@ function detectTransitionPending(fiber: Fiber): boolean {
   return false;
 }
 
+// Test-only escape hatch — same pattern as `__setWalkerFilterConfigForTesting`.
+// Not re-exported from `index.ts`.
+export const __detectTransitionPendingForTesting = detectTransitionPending;
+
 /**
  * Hook state linked list node from fiber.memoizedState.
  * Each hook call creates one node in this linked list.
@@ -947,6 +951,16 @@ export function resolveEffectiveReactKey(fiber: Fiber): string | undefined {
  *   when sibling wrappers (e.g., <div>, SortableItem) each contain a user component
  *   with the same name — a common pattern in lists/tables.
  */
+// Test-only escape hatch — same pattern as `__setWalkerFilterConfigForTesting`.
+// Not re-exported from `index.ts`. Lets unit tests exercise Suspense / Offscreen
+// propagation and field assignment without spinning up React + DOM.
+// eslint-disable-next-line @typescript-eslint/no-use-before-define
+export const __walkFiberForTesting = (
+  fiber: Fiber | null,
+  parentId = 'root',
+  inSuspenseFallback = false,
+): LiveTreeNode[] => walkFiber(fiber, parentId, undefined, 0, inSuspenseFallback);
+
 function walkFiber(
   fiber: Fiber | null,
   parentId: string,
