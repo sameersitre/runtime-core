@@ -848,15 +848,12 @@ export interface ValueTrace {
   steps: TraceStep[];
   /** Wall-clock time the resolver completed. */
   resolvedAtMs: number;
-  /** True when the 50ms budget tripped and the chain is partial. */
-  truncated?: boolean;
   /**
    * Optional error hint for friendly empty states.
    * - `value-not-found`: target path doesn't exist on the current fiber.
    * - `no-fiber`: nodeId no longer present in fiberRefMap (component unmounted).
-   * - `budget-exceeded`: bailed before finding origin.
    */
-  error?: 'value-not-found' | 'no-fiber' | 'budget-exceeded';
+  error?: 'value-not-found' | 'no-fiber';
 }
 
 export interface RuntimeValueTraceMessage {

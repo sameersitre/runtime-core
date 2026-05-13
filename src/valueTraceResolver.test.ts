@@ -213,7 +213,6 @@ describe('resolveValueTrace', () => {
     expect(trace.error).toBeUndefined();
     expect(trace.steps.length).toBe(1);
     expect(trace.steps[0]).toMatchObject({ kind: 'prop', componentName: 'Local' });
-    expect(trace.truncated).toBeUndefined();
   });
 
   // Case 7 — Nested field: child receives a sub-object of parent's prop.
@@ -376,7 +375,6 @@ describe('resolveValueTrace', () => {
     const elapsed = performance.now() - t0;
 
     expect(trace.error).toBeUndefined();
-    expect(trace.truncated).toBeUndefined(); // No budget trip.
     // Consumer + every ancestor that has `item` in its props.
     expect(trace.steps.length).toBe(21);
     expect(trace.steps.every((s) => s.kind === 'prop')).toBe(true);

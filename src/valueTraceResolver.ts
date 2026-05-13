@@ -8,7 +8,8 @@
  *   2. Store match    — scan Zustand / Redux / TanStack Query live snapshots
  *   3. API match      — feed matched reference into fetchOriginRegistry WeakMap
  *
- * On-demand only — never runs per-render. Hard 50 ms wall-clock budget.
+ * On-demand only — never runs per-render. Bounded by MAX_PROP_CHAIN_DEPTH and
+ * SCAN_DEPTH structural limits; no wall-clock budget so every trace runs to origin.
  * Uses reference identity (`===`) before fingerprinting to keep common cases fast.
  *
  * See docs/PRD-VALUE-LINEAGE.md §6 and docs/IMPLEMENTATION-PLAN-VALUE-LINEAGE.md Phase 2.
@@ -43,14 +44,6 @@ import type { TraceStep, ValueTrace } from './types';
 // Constants
 // ---------------------------------------------------------------------------
 
-/**
- * Hard ceiling on wall-clock time per resolve. Over this → bail with truncated=true.
- * 100ms gives headroom for deep React Native trees (virtualized lists wrap rows
- * in 10–15 framework layers); still well under a frame and under the PRD §9.5.1
- * end-to-end budget of 200ms P95 (50ms IPC + 50ms render + 100ms resolver).
- */
-const BUDGET_MS = 100;
-
 /** Max recursive depth when scanning an object/store for a matching fingerprint. */
 const SCAN_DEPTH = 3;
 
@@ -68,7 +61,7 @@ export interface ValueTraceInput {
 }
 
 // ---------------------------------------------------------------------------
-// Helpers — budget + path walk
+// Helpers — path walk
 // ---------------------------------------------------------------------------
 
 function now(): number {
@@ -183,10 +176,8 @@ function findMatchingPathInObject(
   container: unknown,
   currentPath: string[],
   depth: number,
-  deadline: number,
   cache: FpCache,
 ): { path: string[]; confidence: 'exact' | 'fingerprint-match' } | null {
-  if (now() > deadline) return null;
   if (depth > SCAN_DEPTH) return null;
   if (container === null || typeof container !== 'object') return null;
 
@@ -199,7 +190,7 @@ function findMatchingPathInObject(
       const child = container[i];
       const directMatch = valuesMatch(target, targetFp, child, cache);
       if (directMatch) return { path: [...currentPath, String(i)], confidence: directMatch };
-      const nested = findMatchingPathInObject(target, targetFp, child, [...currentPath, String(i)], depth + 1, deadline, cache);
+      const nested = findMatchingPathInObject(target, targetFp, child, [...currentPath, String(i)], depth + 1, cache);
       if (nested) return nested;
     }
   } else {
@@ -207,7 +198,7 @@ function findMatchingPathInObject(
       const child = (container as Record<string, unknown>)[key];
       const directMatch = valuesMatch(target, targetFp, child, cache);
       if (directMatch) return { path: [...currentPath, key], confidence: directMatch };
-      const nested = findMatchingPathInObject(target, targetFp, child, [...currentPath, key], depth + 1, deadline, cache);
+      const nested = findMatchingPathInObject(target, targetFp, child, [...currentPath, key], depth + 1, cache);
       if (nested) return nested;
     }
   }
@@ -362,8 +353,6 @@ function resolveOriginViaTagOrKeyPath(
  * Returns `{requestId}`-less trace — caller adds the round-trip id.
  */
 export function resolveValueTrace(input: ValueTraceInput): Omit<ValueTrace, 'requestId'> {
-  const startedAt = now();
-  const deadline = startedAt + BUDGET_MS;
   const steps: TraceStep[] = [];
 
   const base: Omit<ValueTrace, 'requestId'> = {
@@ -441,8 +430,6 @@ export function resolveValueTrace(input: ValueTraceInput): Omit<ValueTrace, 'req
     let current: Fiber | null = fiber.return;
     let hops = 0;
     while (current && hops < MAX_PROP_CHAIN_DEPTH) {
-      if (now() > deadline) return { ...base, steps, truncated: true, resolvedAtMs: now() };
-
       // Skip ContextProvider fibers — they carry the context value as a
       // mechanical `value` prop, but from the user's mental model the value
       // arrives via the context hook, not as a prop drill. The context-step
@@ -459,7 +446,7 @@ export function resolveValueTrace(input: ValueTraceInput): Omit<ValueTrace, 'req
           let matchConfidence: 'exact' | 'fingerprint-match' = 'exact';
 
           if (matchPath === null) {
-            const match = findMatchingPathInObject(rootValue, rootFp, props, [], 0, deadline, fpCache);
+            const match = findMatchingPathInObject(rootValue, rootFp, props, [], 0, fpCache);
             if (match) {
               matchPath = match.path;
               matchConfidence = match.confidence;
@@ -547,7 +534,7 @@ export function resolveValueTrace(input: ValueTraceInput): Omit<ValueTrace, 'req
   const contextMatch = findContextMatch(fiber, rootValue, rootFp, fiberToNodeId, fpCache);
   if (contextMatch) {
     steps.push(contextMatch.step);
-    const providerStoreMatch = findStoreMatch(contextMatch.providerValue, cachedFp(contextMatch.providerValue, fpCache), deadline, fpCache);
+    const providerStoreMatch = findStoreMatch(contextMatch.providerValue, cachedFp(contextMatch.providerValue, fpCache), fpCache);
     if (providerStoreMatch) {
       steps.push({
         kind: 'store',
@@ -576,7 +563,7 @@ export function resolveValueTrace(input: ValueTraceInput): Omit<ValueTrace, 'req
   }
 
   // 7. Store match — Zustand, Redux, TanStack Query (first match wins).
-  const storeMatch = findStoreMatch(rootValue, rootFp, deadline, fpCache);
+  const storeMatch = findStoreMatch(rootValue, rootFp, fpCache);
   if (storeMatch) {
     steps.push({
       kind: 'store',
@@ -778,13 +765,11 @@ interface StoreMatchResult {
 function findStoreMatch(
   target: unknown,
   targetFp: string,
-  deadline: number,
   cache: FpCache,
 ): StoreMatchResult | null {
   // Zustand — iterate each named store.
   for (const [storeName, state] of getZustandSnapshot()) {
-    if (now() > deadline) return null;
-    const hit = findMatchingPathInObject(target, targetFp, state, [], 0, deadline, cache);
+    const hit = findMatchingPathInObject(target, targetFp, state, [], 0, cache);
     if (hit) {
       return {
         source: 'zustand',
@@ -800,8 +785,7 @@ function findStoreMatch(
   // Redux — single store.
   const redux = getReduxSnapshot();
   if (redux) {
-    if (now() > deadline) return null;
-    const hit = findMatchingPathInObject(target, targetFp, redux, [], 0, deadline, cache);
+    const hit = findMatchingPathInObject(target, targetFp, redux, [], 0, cache);
     if (hit) {
       return {
         source: 'redux',
@@ -818,8 +802,7 @@ function findStoreMatch(
   // envelope is the right retreat root: we want to walk up *within* one
   // fetch's response, not across queries.
   for (const [queryHash, entry] of getTanstackSnapshot()) {
-    if (now() > deadline) return null;
-    const hit = findMatchingPathInObject(target, targetFp, entry.data, [], 0, deadline, cache);
+    const hit = findMatchingPathInObject(target, targetFp, entry.data, [], 0, cache);
     if (hit) {
       return {
         source: 'tanstack-query',
