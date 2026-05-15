@@ -640,21 +640,28 @@ export interface RuntimePropDrillingMessage {
 // React 19+ & Next.js SSR Runtime Messages
 // ============================================================================
 
+/**
+ * State of a single useActionState / useOptimistic hook instance on a fiber.
+ * Mirror of `ActionStateEntry` in flotrace-desktop's `shared/liveMessages.ts`
+ * — keep the field set in sync.
+ */
+export interface ActionStateEntry {
+  hookIndex: number;
+  hookKind: 'action' | 'optimistic';
+  isPending: boolean;
+  state: SerializedValue;
+  error?: SerializedValue;
+  pendingSince?: number;
+  durationMs?: number;
+}
+
 /** Sent whenever a useActionState or useOptimistic hook changes on any fiber */
 export interface RuntimeActionStateMessage {
   type: 'runtime:actionState';
   nodeId: string;
   componentName: string;
   /** One entry per useActionState / useOptimistic hook on this fiber */
-  actions: Array<{
-    hookIndex: number;
-    hookKind: 'action' | 'optimistic';
-    isPending: boolean;
-    state: SerializedValue;
-    error?: SerializedValue;
-    pendingSince?: number;
-    durationMs?: number;
-  }>;
+  actions: ActionStateEntry[];
   timestamp: number;
 }
 
@@ -679,12 +686,18 @@ export interface RuntimeNextjsContextMessage {
   timestamp: number;
 }
 
+/**
+ * RSC / Next.js cache header status. Mirror of the union in
+ * `shared/liveMessages.ts`'s `RscPayloadEntry.cacheStatus` — keep in sync.
+ */
+export type RscCacheStatus = 'HIT' | 'MISS' | 'STALE' | 'unknown';
+
 /** Sent when an RSC / Next.js data fetch is intercepted (metadata only, no values) */
 export interface RuntimeRscPayloadMessage {
   type: 'runtime:rscPayload';
   route: string;
   payloadSizeBytes: number;
-  cacheStatus: 'HIT' | 'MISS' | 'STALE' | 'unknown';
+  cacheStatus: RscCacheStatus;
   timestamp: number;
 }
 

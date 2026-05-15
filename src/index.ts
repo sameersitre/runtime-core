@@ -46,6 +46,17 @@ export type {
   RuntimeValueTraceMessage,
 } from './types';
 
+// React 19+ & Next.js SSR runtime message types
+export type {
+  ActionStateEntry,
+  RscCacheStatus,
+  RuntimeActionStateMessage,
+  RuntimeOptimisticDiffMessage,
+  RuntimeNextjsContextMessage,
+  RuntimeRscPayloadMessage,
+  RuntimeHydrationEventMessage,
+} from './types';
+
 // Value Lineage resolver
 export { resolveValueTrace } from './valueTraceResolver';
 export type { ValueTraceInput } from './valueTraceResolver';
