@@ -4,7 +4,7 @@
  * Called by fiberTreeWalker after each successful tree build.
  */
 import type { FloTraceWebSocketClient } from "./websocketClient";
-import type { SerializedValue } from "./types";
+import type { ActionStateEntry } from "./types";
 import { serializeValue } from "./serializer";
 
 /** Previous snapshot of action state per nodeId to detect changes */
@@ -31,15 +31,7 @@ interface Fiber {
  * Inspect a single fiber for useActionState / useOptimistic hooks.
  * Returns null if no relevant hooks are found.
  */
-function extractActionEntries(fiber: Fiber): Array<{
-  hookIndex: number;
-  hookKind: 'action' | 'optimistic';
-  isPending: boolean;
-  state: SerializedValue;
-  error?: SerializedValue;
-  pendingSince?: number;
-  durationMs?: number;
-}> | null {
+function extractActionEntries(fiber: Fiber): ActionStateEntry[] | null {
   const hookTypes = fiber._debugHookTypes;
   if (!hookTypes) return null;
 
