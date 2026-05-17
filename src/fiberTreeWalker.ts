@@ -26,6 +26,7 @@ import { detectServerComponent, maybeEmitNextjsContext, resetNextjsDetection } f
 import { scanActionStateChanges, clearActionStateCache } from "./actionStateTracker";
 import { installRscPayloadInterceptor, uninstallRscPayloadInterceptor } from "./rscPayloadInterceptor";
 import { findFetchOrigin, hasActiveTags } from "./fetchOriginRegistry";
+import { logFiberType, logTreeSnapshot, logTreeSummary } from "./fiberDebugLogger";
 export type { SerializedValue };
 
 // React fiber tag constants (from React source: ReactWorkTags.js)
@@ -470,6 +471,7 @@ let fiberRefMap: Map<string, Fiber> = new Map();
  * Get the display name of a fiber's component type.
  */
 function getComponentName(fiber: Fiber): string {
+  logFiberType(fiber, "getName");
   const type = fiber.type;
   if (!type) return "Unknown";
 
@@ -1386,6 +1388,7 @@ function executeSnapshot(root: FiberRoot): void {
         "nextInterval:",
         snapshotIntervalMs + "ms",
       );
+      logTreeSnapshot(tree, `send seq=${snapshotCounter}`);
       client.sendImmediate({
         type: "runtime:treeSnapshot",
         tree,
@@ -1403,6 +1406,7 @@ function executeSnapshot(root: FiberRoot): void {
           "removed:", diff.removed.length,
           "updated:", diff.updated.length,
         );
+        logTreeSummary(tree, `diff seq=${diffSeq}`);
         client.sendImmediate({
           type: "runtime:treeDiff",
           seq: diffSeq,

@@ -153,3 +153,14 @@ export {
   installRscPayloadInterceptor,
   uninstallRscPayloadInterceptor,
 } from './rscPayloadInterceptor';
+
+// Fiber debug recorder — silent in-memory buffer of fiber/tree observations.
+// Enable in any console with `globalThis.__FT_DEBUG = true`, then call
+// `__ft.dump()` / `__ft.fibers()` / `__ft.download()` to inspect.
+export {
+  setFiberDebug,
+  describeFiberType,
+  logFiberType,
+  logTreeSnapshot,
+  logTreeSummary,
+} from './fiberDebugLogger';
