@@ -73,13 +73,19 @@ interface TreeRecord {
 const fiberRecords = new Map<string, FiberRecord>();
 const treeRecords: TreeRecord[] = [];
 
-interface DebugGlobal {
-  __FT_DEBUG?: boolean;
-  __ft?: FtConsoleApi;
+// Ambient globals — the `__FT_DEBUG` toggle and `__ft` console API are
+// reachable from any environment via `globalThis`. Declaring them once here
+// (instead of per-call `globalThis as DebugGlobal` casts) means every reader/
+// writer sees the same type and adding a new field is a one-line change.
+declare global {
+  // eslint-disable-next-line no-var
+  var __FT_DEBUG: boolean | undefined;
+  // eslint-disable-next-line no-var
+  var __ft: FtConsoleApi | undefined;
 }
 
 function isRecording(): boolean {
-  return Boolean((globalThis as DebugGlobal).__FT_DEBUG);
+  return Boolean(globalThis.__FT_DEBUG);
 }
 
 // ---------------------------------------------------------------------------
@@ -87,7 +93,7 @@ function isRecording(): boolean {
 // ---------------------------------------------------------------------------
 
 export function setFiberDebug(enabled: boolean): void {
-  (globalThis as DebugGlobal).__FT_DEBUG = enabled;
+  globalThis.__FT_DEBUG = enabled;
   if (enabled) {
     // eslint-disable-next-line no-console
     console.info(
@@ -122,6 +128,36 @@ type FiberTypeLike = {
   render?: FiberTypeLike;
 };
 
+/**
+ * Narrows an unknown fiber `type` value to `FiberTypeLike` when it's a
+ * function. JavaScript functions are objects, so reading `.name`, `.displayName`,
+ * and `.prototype` off them is safe — this guard just brands the narrowing so
+ * downstream code doesn't repeat the cast.
+ */
+function isFiberFunctionType(t: unknown): t is FiberTypeLike & ((...args: unknown[]) => unknown) {
+  return typeof t === 'function';
+}
+
+/**
+ * Narrows an unknown fiber `type` value to `FiberTypeLike` when it's a
+ * non-null object — covers ForwardRef, Memo, Context, and the various
+ * symbol-tagged React internal types.
+ */
+function isFiberObjectType(t: unknown): t is FiberTypeLike {
+  return typeof t === 'object' && t !== null;
+}
+
+/**
+ * Detects React class components by looking at `Component.prototype.isReactComponent`,
+ * the same marker React itself uses internally. Returns false for any non-function
+ * input (functional components, ForwardRef, host strings, etc.).
+ */
+function isClassComponentType(t: unknown): boolean {
+  if (typeof t !== 'function') return false;
+  const proto = (t as { prototype?: { isReactComponent?: unknown } }).prototype;
+  return typeof proto?.isReactComponent !== 'undefined';
+}
+
 export function describeFiberType(fiber: FiberLike): {
   kind: FiberRecord['kind'];
   name: string | undefined;
@@ -135,45 +171,41 @@ export function describeFiberType(fiber: FiberLike): {
     return { kind: 'host', name: type, displayName: undefined, resolved: type, looksMinified: false };
   }
 
-  if (typeof type === 'function') {
-    const t = type as FiberTypeLike;
-    const isClass =
-      typeof (type as { prototype?: { isReactComponent?: unknown } }).prototype
-        ?.isReactComponent !== 'undefined';
-    const resolved = t.displayName ?? t.name ?? 'Anonymous';
+  if (isFiberFunctionType(type)) {
+    const isClass = isClassComponentType(type);
+    const resolved = type.displayName ?? type.name ?? 'Anonymous';
     return {
       kind: isClass ? 'class' : 'function',
-      name: t.name,
-      displayName: t.displayName,
+      name: type.name,
+      displayName: type.displayName,
       resolved,
       looksMinified: looksMinified(resolved),
     };
   }
 
-  if (typeof type === 'object' && type !== null) {
-    const t = type as FiberTypeLike;
-    if (t.render) {
-      const resolved = t.render.displayName ?? t.render.name ?? 'ForwardRef';
+  if (isFiberObjectType(type)) {
+    if (type.render) {
+      const resolved = type.render.displayName ?? type.render.name ?? 'ForwardRef';
       return {
         kind: 'forwardRef',
-        name: t.render.name,
-        displayName: t.render.displayName,
+        name: type.render.name,
+        displayName: type.render.displayName,
         resolved,
         looksMinified: looksMinified(resolved),
       };
     }
-    if (t.type) {
-      const resolved = t.type.displayName ?? t.type.name ?? 'Memo';
+    if (type.type) {
+      const resolved = type.type.displayName ?? type.type.name ?? 'Memo';
       return {
         kind: 'memo',
-        name: t.type.name,
-        displayName: t.type.displayName,
+        name: type.type.name,
+        displayName: type.type.displayName,
         resolved,
         looksMinified: looksMinified(resolved),
       };
     }
-    const resolved = t.displayName ?? t.name ?? 'Unknown';
-    return { kind: 'unknown', name: t.name, displayName: t.displayName, resolved, looksMinified: looksMinified(resolved) };
+    const resolved = type.displayName ?? type.name ?? 'Unknown';
+    return { kind: 'unknown', name: type.name, displayName: type.displayName, resolved, looksMinified: looksMinified(resolved) };
   }
 
   return { kind: 'unknown', name: undefined, displayName: undefined, resolved: 'Unknown', looksMinified: false };
@@ -296,8 +328,7 @@ interface FtConsoleApi {
 }
 
 function installConsoleApi(): void {
-  const g = globalThis as DebugGlobal;
-  if (g.__ft) return;
+  if (globalThis.__ft) return;
 
   const api: FtConsoleApi = {
     dump() {
@@ -435,7 +466,7 @@ function installConsoleApi(): void {
     },
   };
 
-  g.__ft = api;
+  globalThis.__ft = api;
 }
 
 // Install __ft eagerly at module load so the console API is available even

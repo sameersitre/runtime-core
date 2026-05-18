@@ -157,10 +157,14 @@ export {
 // Fiber debug recorder — silent in-memory buffer of fiber/tree observations.
 // Enable in any console with `globalThis.__FT_DEBUG = true`, then call
 // `__ft.dump()` / `__ft.fibers()` / `__ft.download()` to inspect.
+//
+// `logFiberType` is intentionally NOT re-exported — its parameter type
+// (`FiberLike`) is internal and only `fiberTreeWalker` calls it (via direct
+// relative import). Re-exporting it would force adapters to either import
+// `FiberLike` (which we don't export either) or fall back to implicit `any`.
 export {
   setFiberDebug,
   describeFiberType,
-  logFiberType,
   logTreeSnapshot,
   logTreeSummary,
 } from './fiberDebugLogger';
