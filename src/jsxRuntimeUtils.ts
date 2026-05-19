@@ -239,10 +239,21 @@ export function computeCallSiteMetricsPayload(
   now: number = performance.now(),
 ): Record<string, number> | null {
   let out: Record<string, number> | null = null;
-  for (const [callSiteId] of callSiteRenders) {
-    const rate = getCallSiteRenderRate(callSiteId, windowMs, now);
-    if (rate > 0) {
-      (out ??= {})[callSiteId] = rate;
+  const cutoff = now - windowMs;
+  // Single-pass over the ring buffer Map. Iterating `entries()` gives us
+  // the timestamp array directly; counting backwards on the same array
+  // saves a `Map.get(callSiteId)` per entry compared to delegating to
+  // `getCallSiteRenderRate`. On a 5000-callsite app at 1Hz that's 5000
+  // map lookups per tick saved.
+  for (const [callSiteId, arr] of callSiteRenders) {
+    if (arr.length === 0) continue;
+    let count = 0;
+    for (let i = arr.length - 1; i >= 0; i--) {
+      if (arr[i] >= cutoff) count++;
+      else break;
+    }
+    if (count > 0) {
+      (out ??= {})[callSiteId] = (count / windowMs) * 1000;
     }
   }
   return out;
@@ -299,18 +310,15 @@ const currentKeyBatch = new Map<string, { count: number; source: FlotraceJsxSour
 let keyBatchFlushScheduled = false;
 
 export function recordJsxKey(source: FlotraceJsxSource, key: unknown): void {
-  // React accepts string + number keys; `null` / `undefined` mean "no key
-  // specified" which can't be a duplicate. Coerce to string for the map key
-  // — `<X key="1"/>` and `<X key={1}/>` should detect as duplicates of each
-  // other (React itself coerces, same semantics).
-  if (key === null || key === undefined) return;
-  // `String(Symbol())` throws TypeError. `String({}) === '[object Object]'`
-  // would silently collide multiple distinct object keys at the same call
-  // site. React itself rejects non-primitive keys but only warns — our
-  // wrapper runs FIRST, so we have to be defensive. Ignore non-primitive
-  // keys entirely; duplicate detection on weird keys is worthless anyway
-  // (the user's bug is "non-primitive key" — surfaced by React's own
-  // warning — not "duplicate key").
+  // React accepts string/number/boolean keys; everything else (null,
+  // undefined, symbols, objects) means "no usable key for duplicate
+  // detection". The primitive whitelist subsumes the null/undefined case
+  // (typeof null === 'object', typeof undefined === 'undefined') AND
+  // guards against `String(Symbol())` TypeError + the `String({}) ===
+  // '[object Object]'` false-collision that would silently group every
+  // distinct object key together. Non-primitive keys are React's own bug
+  // to surface via its warning — we don't pretend to detect "duplicates"
+  // over them.
   const keyType = typeof key;
   if (keyType !== 'string' && keyType !== 'number' && keyType !== 'boolean') return;
   const keyStr = String(key);
@@ -391,6 +399,23 @@ export function isJsxRuntimeActive(): boolean {
  */
 export function __resetJsxRuntimeAdoptionForTesting(): void {
   delete (globalThis as Record<symbol, unknown>)[JSX_RUNTIME_ACTIVE_KEY];
+}
+
+/**
+ * One-stop reset for every piece of module-local state owned by the JSX
+ * runtime layer. Tests that don't care about fine-grained isolation can
+ * call this in `beforeEach` instead of chaining the individual resets and
+ * risking a missed slot when new state is added later.
+ *
+ * Currently covers: duplicate-key batch + flush-scheduled flag + emitter,
+ * adoption sentinel. The individual helpers stay exported for tests that
+ * need surgical reset (e.g. asserting that a partial reset preserves the
+ * other piece).
+ */
+export function __resetJsxRuntimeForTesting(): void {
+  __resetDuplicateKeyStateForTesting();
+  __resetJsxRuntimeAdoptionForTesting();
+  clearCallSiteRenders();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

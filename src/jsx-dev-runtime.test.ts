@@ -41,9 +41,8 @@ vi.mock('react/jsx-dev-runtime', () => ({
 
 import {
   FLOTRACE_SOURCE,
-  __resetJsxRuntimeAdoptionForTesting,
+  __resetJsxRuntimeForTesting,
   isJsxRuntimeActive,
-  clearCallSiteRenders,
   getCallSiteRenders,
   computeCallSiteId,
   type FlotraceJsxSource,
@@ -52,7 +51,6 @@ import {
   jsxDEV,
   jsxsDEV,
   Fragment,
-  __resetAdoptionMarkedForTesting,
 } from './jsx-dev-runtime';
 
 const SOURCE = { fileName: 'src/Foo.tsx', lineNumber: 10, columnNumber: 5 };
@@ -63,14 +61,14 @@ function MyComponent() {
 
 beforeEach(() => {
   mockOrigJsxDEV.mockClear();
-  clearCallSiteRenders();
-  __resetJsxRuntimeAdoptionForTesting();
-  __resetAdoptionMarkedForTesting();
+  // One-stop reset for every module-local slot the runtime owns —
+  // ring buffer, duplicate-key batch, adoption sentinel — so test order
+  // can't leak state.
+  __resetJsxRuntimeForTesting();
 });
 
 afterEach(() => {
-  __resetJsxRuntimeAdoptionForTesting();
-  __resetAdoptionMarkedForTesting();
+  __resetJsxRuntimeForTesting();
 });
 
 describe('jsx-dev-runtime', () => {

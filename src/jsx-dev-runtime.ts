@@ -86,13 +86,6 @@ interface JsxSource {
   columnNumber: number;
 }
 
-/**
- * One-time adoption flag local to this module. First call sets it via
- * `markJsxRuntimeActive()`; subsequent calls take a cheap boolean branch.
- * Module-local (not exported) — we never need to "un-adopt" mid-session.
- */
-let adoptionMarked = false;
-
 export function jsxDEV(
   type: JsxDEVType,
   props: Record<string, unknown> | null,
@@ -114,10 +107,12 @@ export function jsxDEV(
     return origJsxDEV(type, props, key, isStaticChildren, source, self);
   }
 
-  if (!adoptionMarked) {
-    markJsxRuntimeActive();
-    adoptionMarked = true;
-  }
+  // Idempotent — `markJsxRuntimeActive()` is a single property write on
+  // `globalThis`. No local cache needed; the cost of calling it on every
+  // jsxDEV (rather than once via a guarded flag) is one assignment per JSX
+  // element. Negligible on the hot path AND saves a state slot + a test-
+  // only reset helper.
+  markJsxRuntimeActive();
 
   const callSiteId = computeCallSiteId(source);
   const inline = detectInlineLiterals(props);
@@ -169,12 +164,3 @@ export { Fragment };
 // type-checks without any additional setup.
 export type { JSX } from 'react/jsx-dev-runtime';
 
-/**
- * Reset adoption-marked flag for testing. Pairs with
- * `__resetJsxRuntimeAdoptionForTesting` in jsxRuntimeUtils which clears the
- * global sentinel. Both are needed because this module also tracks a local
- * boolean to skip the global write on subsequent calls.
- */
-export function __resetAdoptionMarkedForTesting(): void {
-  adoptionMarked = false;
-}
