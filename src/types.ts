@@ -4,6 +4,26 @@
  * to avoid importing from the extension package.
  */
 
+// Re-exported from jsxRuntimeUtils so consumers can find LiveTreeNode +
+// FlotraceJsxSource in one place; runtime-core's barrel re-exports both.
+export type { FlotraceJsxSource } from './jsxRuntimeUtils';
+import type { FlotraceJsxSource } from './jsxRuntimeUtils';
+
+/**
+ * Confidence tier for `LiveTreeNode` source attribution. Drives the
+ * OriginBadge variant in the renderer:
+ *
+ *   - `'exact'`     — JSX-runtime symbol present OR `_debugSource.fileName`
+ *                     populated (Babel JSX plugin / React 17–18 dev).
+ *   - `'inferred'`  — path resolved via the owner-chain walk or
+ *                     `_debugStack.stack` first-non-react frame (R19+).
+ *   - `'package'`   — fiber classified as framework/library; user clicks won't
+ *                     land in user code anyway.
+ *   - `'unknown'`   — no signal at any tier. Renders an amber `?` pill so the
+ *                     UI is honest about what it doesn't know.
+ */
+export type SourceConfidence = 'exact' | 'inferred' | 'package' | 'unknown';
+
 /**
  * Serialized value for safe transmission over WebSocket
  */
@@ -266,6 +286,23 @@ export interface LiveTreeNode {
   isLibrary?: boolean;
   /** Short display label for the library source (e.g. 'framer', 'fontawesome', 'sonner') */
   libraryName?: string;
+  // --- Feature: JSX runtime source attribution (Milestone 8) ---
+  /**
+   * Source attribution captured at JSX-creation time by the optional
+   * `@flotrace/runtime-core/jsx-dev-runtime` opt-in. Present only when the
+   * user has set `"jsxImportSource": "@flotrace/runtime-core"` in their
+   * tsconfig.json — the highest-confidence source signal available.
+   *
+   * When present, `filePath` / `lineNumber` are filled from `jsxSource` so
+   * existing consumers (click-to-IDE, breadcrumb path display) keep working
+   * without changes.
+   */
+  jsxSource?: FlotraceJsxSource;
+  /**
+   * Confidence tier of the resolved source. See `SourceConfidence` doc-comment
+   * for the four tiers and what each means for the UI.
+   */
+  sourceConfidence?: SourceConfidence;
 }
 
 // ============================================================================

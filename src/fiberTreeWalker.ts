@@ -12,7 +12,8 @@
  * from the Profiler's onRender callback - so tree walks happen after each React commit.
  */
 
-import type { LiveTreeNode, RuntimeTreeDiffMessage, SerializedValue, DetailedRenderReason, PropChange, HookInfo, EffectInfo } from "./types";
+import type { LiveTreeNode, RuntimeTreeDiffMessage, SerializedValue, DetailedRenderReason, PropChange, HookInfo, EffectInfo, SourceConfidence } from "./types";
+import { FLOTRACE_SOURCE, type FlotraceJsxSource } from "./jsxRuntimeUtils";
 import { serializeValue, serializeProps } from "./serializer";
 import { getWebSocketClient } from "./websocketClient";
 import { inspectHooks } from "./hookInspector";
@@ -628,15 +629,52 @@ const FRAMEWORK_PATH_PATTERNS: RegExp[] = [
  * `installFiberTreeWalker({ frameworkComponentNames, frameworkPathPatterns })`.
  */
 /**
- * Resolve the most useful source-file path for a fiber, trying three evidence
- * sources in order:
- *   1. `fiber._debugSource.fileName` — React 17/18 + early 19 (Babel JSX plugin)
- *   2. `fiber._debugOwner` chain (3-hop) — enriches wrappers that don't carry
+ * Read the JSX-runtime source attribution off a fiber's memoized props. Set
+ * by the optional `@flotrace/runtime-core/jsx-dev-runtime` opt-in via a
+ * symbol-keyed prop that survives React's prop pipeline but doesn't appear in
+ * `Object.keys` / React unknown-DOM-prop warnings.
+ *
+ * Returns `undefined` when the user hasn't opted in OR the fiber was created
+ * by a path that bypasses jsxDEV (classic runtime, server-rendered fiber
+ * hydrated client-side, framework wrapper that calls React.createElement
+ * directly). Caller falls back to the existing heuristic ladder.
+ *
+ * Validation: only the shape we care about (`fileName`/`lineNumber`/
+ * `columnNumber`/`callSiteId` all strings/numbers). Defensive against a
+ * malformed Symbol.for collision from unrelated tooling.
+ */
+function readJsxSourceFromFiber(fiber: Fiber): FlotraceJsxSource | undefined {
+  const props = fiber.memoizedProps;
+  if (!props) return undefined;
+  const raw = (props as Record<string | symbol, unknown>)[FLOTRACE_SOURCE];
+  if (!raw || typeof raw !== 'object') return undefined;
+  const obj = raw as Record<string, unknown>;
+  if (
+    typeof obj.fileName !== 'string' ||
+    typeof obj.lineNumber !== 'number' ||
+    typeof obj.columnNumber !== 'number' ||
+    typeof obj.callSiteId !== 'string'
+  ) {
+    return undefined;
+  }
+  return raw as FlotraceJsxSource;
+}
+
+/**
+ * Resolve the most useful source-file path for a fiber, trying evidence
+ * sources in priority order:
+ *   1. `fiber.memoizedProps[FLOTRACE_SOURCE].fileName` — JSX-runtime opt-in
+ *      (highest confidence; columnNumber also available)
+ *   2. `fiber._debugSource.fileName` — React 17/18 + early 19 (Babel JSX plugin)
+ *   3. `fiber._debugOwner` chain (3-hop) — enriches wrappers that don't carry
  *      `_debugSource` themselves but are rendered by user code that does
- *   3. `fiber._debugStack.stack` first non-react frame — React 19.1+ replaces
+ *   4. `fiber._debugStack.stack` first non-react frame — React 19.1+ replaces
  *      `_debugSource` with an Error object captured at JSX-creation time
  */
 function resolveEffectiveSourcePath(fiber: Fiber): string | null {
+  const jsxSrc = readJsxSourceFromFiber(fiber);
+  if (jsxSrc) return jsxSrc.fileName;
+
   if (fiber._debugSource?.fileName) return fiber._debugSource.fileName;
 
   const ownerHit = walkAncestors<string>(
@@ -654,6 +692,33 @@ function resolveEffectiveSourcePath(fiber: Fiber): string | null {
   }
 
   return null;
+}
+
+/**
+ * Compute the four-tier source-confidence for a fiber. Pure decision tree —
+ * mirrors `resolveEffectiveSourcePath`'s priority ladder but returns the tier
+ * rather than the resolved path. Used to drive the OriginBadge variant.
+ *
+ * Framework / library nodes short-circuit to `'package'` regardless of any
+ * source signal they may have inherited from a wrapping user component —
+ * we don't want a `?` pill or file-line link on `<RedirectErrorBoundary>`.
+ *
+ * `precomputedJsxSource` lets the caller pass in an already-read value to
+ * avoid a second symbol lookup on every fiber visit (the walker reads it
+ * once for `node.jsxSource` assignment and reuses it here).
+ */
+function resolveSourceConfidence(
+  fiber: Fiber,
+  isFramework: boolean,
+  isLibrary: boolean,
+  precomputedJsxSource?: FlotraceJsxSource | undefined,
+): SourceConfidence {
+  if (isFramework || isLibrary) return 'package';
+  const jsxSrc = precomputedJsxSource ?? readJsxSourceFromFiber(fiber);
+  if (jsxSrc) return 'exact';
+  if (fiber._debugSource?.fileName) return 'exact';
+  if (resolveEffectiveSourcePath(fiber)) return 'inferred';
+  return 'unknown';
 }
 
 /**
@@ -963,6 +1028,16 @@ export const __walkFiberForTesting = (
   inSuspenseFallback = false,
 ): LiveTreeNode[] => walkFiber(fiber, parentId, undefined, 0, inSuspenseFallback);
 
+/**
+ * Test-only escape hatch exposing the JSX-runtime source helpers so unit
+ * tests can exercise them on synthetic fiber shapes without going through
+ * the full walker. Not re-exported from `index.ts` — adapter packages never
+ * see these.
+ */
+export const __readJsxSourceFromFiberForTesting = readJsxSourceFromFiber;
+export const __resolveSourceConfidenceForTesting = resolveSourceConfidence;
+export const __resolveEffectiveSourcePathForTesting = resolveEffectiveSourcePath;
+
 function walkFiber(
   fiber: Fiber | null,
   parentId: string,
@@ -1035,6 +1110,20 @@ function walkFiber(
         // Library detection: only run for non-framework components; framework components
         // are already categorized and hidden/shown via the framework filter toggle.
         const libraryName = framework ? undefined : detectLibraryName(current, name);
+
+        // JSX-runtime source attribution (highest confidence): if the user
+        // opted into `"jsxImportSource": "@flotrace/runtime-core"`, the symbol
+        // is on memoizedProps. When present, prefer it over _debugSource for
+        // filePath/lineNumber so click-to-IDE lands on the exact JSX position.
+        // Read once and reuse — single symbol lookup per fiber visit.
+        const jsxSource = readJsxSourceFromFiber(current);
+        const sourceConfidence = resolveSourceConfidence(
+          current,
+          framework === true,
+          libraryName !== undefined,
+          jsxSource,
+        );
+
         const node: LiveTreeNode = {
           id: nodeId,
           name,
@@ -1043,8 +1132,8 @@ function walkFiber(
           renderPhase,
           renderReason,
           renderDuration: current.actualDuration,
-          filePath: current._debugSource?.fileName,
-          lineNumber: current._debugSource?.lineNumber,
+          filePath: jsxSource?.fileName ?? current._debugSource?.fileName,
+          lineNumber: jsxSource?.lineNumber ?? current._debugSource?.lineNumber,
           isFramework: framework,
           reactKey: resolveEffectiveReactKey(current),
           queryHashes,
@@ -1056,6 +1145,8 @@ function walkFiber(
           isServerComponent,
           isLibrary: libraryName !== undefined ? true : undefined,
           libraryName,
+          jsxSource,
+          sourceConfidence,
         };
 
         // Platform-specific prune hook: RN active-screen filter, Modal overlays, etc.

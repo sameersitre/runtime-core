@@ -18,8 +18,28 @@ export type {
   SerializedValue,
   LiveTreeNode,
   NetworkRequestEntry,
+  SourceConfidence,
+  FlotraceJsxSource,
 } from './types';
 export { DEFAULT_CONFIG } from './types';
+
+// JSX runtime helpers (additive export per PRD-JSX-RUNTIME §13 Q3). The
+// jsx-runtime entries themselves live at @flotrace/runtime-core/jsx-runtime
+// and @flotrace/runtime-core/jsx-dev-runtime; these helpers are re-exported
+// so advanced consumers building custom tooling on top can reach them.
+export {
+  FLOTRACE_SOURCE,
+  JSX_RUNTIME_ACTIVE_KEY,
+  normalizeJsxSourcePath,
+  computeCallSiteId,
+  recordCallSiteRender,
+  getCallSiteRenders,
+  getCallSiteRenderRate,
+  clearCallSiteRenders,
+  markJsxRuntimeActive,
+  isJsxRuntimeActive,
+  detectInlineLiterals,
+} from './jsxRuntimeUtils';
 
 // Console-Free Debugging types
 export type {
