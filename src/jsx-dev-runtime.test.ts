@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Unit tests for the jsxDEV wrapper.
  *
@@ -8,6 +9,12 @@
  *
  * React-version compatibility (17 / 18 / 19) is verified separately via
  * integration smoke tests; the jsxDEV argument shape is frozen since R17.
+ *
+ * Requires jsdom: the wrapper now has an `IS_BROWSER` short-circuit
+ * (`typeof window !== 'undefined' && typeof document !== 'undefined'`) that
+ * skips symbol-attach on the server to avoid Next.js RSC serializer
+ * warnings. Without jsdom, every "happy path" test would hit the bail-out
+ * and fail because the wrapper would pass through without enrichment.
  */
 import { describe, expect, test, vi, beforeEach, afterEach } from 'vitest';
 

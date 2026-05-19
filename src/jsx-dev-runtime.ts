@@ -45,6 +45,30 @@ import {
 } from './jsxRuntimeUtils';
 
 /**
+ * Detect whether we're running in a browser context (set ONCE at module-load
+ * so the per-call check is a cheap boolean read).
+ *
+ * Why: Next.js App Router runs `jsxDEV` for Server Components on the Node
+ * server. Attaching the `FLOTRACE_SOURCE` symbol there triggers React's RSC
+ * serializer warning when props cross the Server → Client Component boundary:
+ *
+ *   "Only plain objects can be passed to Client Components from Server
+ *    Components. Objects with symbol properties like flotrace.source are
+ *    not supported."
+ *
+ * Server-side fibers never reach the FloTrace walker anyway (the walker
+ * runs in the browser), so server-side attribution is pure waste. Skipping
+ * the symbol attach on the server eliminates the warning + saves an
+ * allocation per server-rendered element. Adoption sentinel + ring buffer
+ * are also skipped on the server — they're browser-only signals.
+ *
+ * Both `window` AND `document` are checked because some SSR environments
+ * polyfill `window` for DOM-fixture purposes but don't ship a real document.
+ */
+const IS_BROWSER =
+  typeof window !== 'undefined' && typeof document !== 'undefined';
+
+/**
  * The wrapper takes the same arguments the compiler would pass to React's
  * `jsxDEV`. We mirror React's argument types via `Parameters<typeof origJsxDEV>`
  * rather than re-declaring them, so any drift in React's signature surfaces
@@ -80,6 +104,13 @@ export function jsxDEV(
   // Bail-out path: classic runtime, compiler that stripped source, or a
   // children-less element React-internal call. Pass through untouched.
   if (!source || !props) {
+    return origJsxDEV(type, props, key, isStaticChildren, source, self);
+  }
+
+  // Server-side jsxDEV (Next.js Server Components, etc.) — pass through
+  // without attaching the symbol so React's RSC serializer doesn't warn
+  // on Server → Client prop boundaries. See IS_BROWSER doc-comment.
+  if (!IS_BROWSER) {
     return origJsxDEV(type, props, key, isStaticChildren, source, self);
   }
 
@@ -132,6 +163,11 @@ export function jsxDEV(
 export const jsxsDEV = jsxDEV;
 
 export { Fragment };
+// Re-export the JSX namespace so TypeScript can resolve `JSX.Element`,
+// `JSX.IntrinsicElements`, etc. when `jsxImportSource` points at this
+// module. Matches the export shape of `react/jsx-dev-runtime` so user code
+// type-checks without any additional setup.
+export type { JSX } from 'react/jsx-dev-runtime';
 
 /**
  * Reset adoption-marked flag for testing. Pairs with

@@ -72,12 +72,14 @@ describe('jsxRuntimeUtils', () => {
       }
     });
 
-    test('leaves unknown prefixes untouched (Turbopack [project], etc.)', () => {
-      // Turbopack's [project]/... style has no documented stable prefix; we
-      // leave it alone rather than guess. Drive-letter rule still doesn't
-      // match (starts with `[`).
-      expect(normalizeJsxSourcePath('[project]/src/Foo.tsx')).toBe(
-        '[project]/src/Foo.tsx',
+    test('strips Next.js Turbopack `[project]/` prefix so click-to-IDE can resolve relative paths', () => {
+      // Turbopack emits paths like `[project]/client/app/Foo.tsx` — strip
+      // the bracket-tag prefix so the result is a plain project-relative
+      // form. The desktop IPC handler resolves these against the active
+      // project root.
+      expect(normalizeJsxSourcePath('[project]/src/Foo.tsx')).toBe('src/Foo.tsx');
+      expect(normalizeJsxSourcePath('[project]/client/app/components/MediaCard.tsx')).toBe(
+        'client/app/components/MediaCard.tsx',
       );
     });
   });

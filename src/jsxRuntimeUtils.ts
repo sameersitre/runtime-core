@@ -76,6 +76,11 @@ export function normalizeJsxSourcePath(fileName: string): string {
   if (p.startsWith('file://')) p = p.slice('file://'.length);
   if (p.startsWith('webpack-internal:///./'))
     p = p.slice('webpack-internal:///./'.length);
+  // Next.js Turbopack emits `[project]/path/to/Foo.tsx` for project-relative
+  // paths. Strip the prefix so the result is a plain project-relative path
+  // matching what other bundlers produce — click-to-IDE in the desktop can
+  // then resolve it against the active project root.
+  if (p.startsWith('[project]/')) p = p.slice('[project]/'.length);
   if (p.startsWith('./')) p = p.slice(2);
   // Windows + Vite emits `file:///C:/...` → after `file://` strip we get
   // `/C:/...`. Trim a single leading `/` when followed by `<letter>:` so the

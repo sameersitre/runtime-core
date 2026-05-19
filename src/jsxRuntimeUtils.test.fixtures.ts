@@ -80,4 +80,9 @@ export const BUNDLER_PATH_STYLES: ReadonlyArray<{
     raw: 'file:///C:\\Users\\foo\\src\\Foo.tsx',
     normalized: 'c:\\Users\\foo\\src\\Foo.tsx',
   },
+  {
+    label: 'Next.js Turbopack ([project]/...)',
+    raw: '[project]/client/app/components/MediaCard.tsx',
+    normalized: 'client/app/components/MediaCard.tsx',
+  },
 ];
