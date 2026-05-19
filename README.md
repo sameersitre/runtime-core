@@ -50,6 +50,100 @@ your React app  ←→  @flotrace/runtime[-native]  ←→  ws://localhost:3457 
 | `serializer` | Safe JSON serialization (depth 5, circular-ref guard, truncation). |
 | `websocketClient` | Singleton WS client with exponential backoff reconnect, message batching, optional auth token. |
 
+## Optional: JSX runtime opt-in (source attribution upgrade)
+
+`runtime-core` ships two additional subpath entries — `./jsx-runtime` and `./jsx-dev-runtime` — that you can opt into via a one-line `tsconfig.json` change. Doing so lets FloTrace attribute every JSX call site to its exact `file:line:column` with 100% confidence, even on stacks where React no longer carries that signal (Next.js 15 + SWC, React 19 with `_debugSource` removed).
+
+**The opt-in is free, additive, and reverts cleanly** — your app continues to work in production unchanged, and the existing heuristic ladder still runs when the opt-in is off.
+
+### Setup
+
+```jsonc
+// tsconfig.json
+{
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "@flotrace/runtime-core"
+  }
+}
+```
+
+Restart your dev server. That's it.
+
+### What you get
+
+- **Click any node in FloTrace → IDE jumps to the exact JSX line** (column included).
+- **Per-call-site render metrics** instead of per-component-type. `<Button/>` at `Header.tsx:23` and `<Button/>` at `Footer.tsx:7` are now separate rows in the Hot Call Sites tab — only the actually-hot one is flagged.
+- **Inline-literal detection** — the runtime sees props *before* React processes them and tags fresh-each-render `onClick={() => ...}`, `style={{}}`, `items={[...]}` at the call site that created them. This signal is impossible to recover after React commits.
+- **Conditional-render visibility** — a callsite nested in `{cond && <X/>}` gets a `~N%` chip showing how often it actually renders.
+- **Duplicate-key warnings** with exact source location instead of grep-the-codebase.
+- **Privacy-safe Copy-as-Prompt** — every component reference cites `(src/components/Header.tsx:42)`, project-relative, never `/Users/foo/...`.
+- **Watches, Resolution Tracker, Value Lineage, Cascade, Prop Drilling** all gain `(file:line)` annotations and HMR-stable call-site identity.
+
+### Bundler matrix
+
+| Bundler | Zero-config? | Notes |
+|---|---|---|
+| **Vite (+ SWC or Babel)** | ✅ | Honors `jsxImportSource` from tsconfig out of the box. |
+| **Next.js 15 (Webpack)** | ✅ | SWC reads tsconfig. |
+| **Next.js 15 (Turbopack)** | ✅ | Same. |
+| **Remix / Vinxi** | ✅ | Same. |
+| **Expo SDK 50+ (Metro + Babel)** | ✅ | Metro's Babel preset honors `jsxImportSource`. |
+| **Bun** | ✅ | Built-in JSX transformer reads tsconfig. |
+| **Create React App** | ⚠ Needs Babel snippet | CRA's locked Babel config doesn't honor `jsxImportSource` from tsconfig. Use CRACO (or `react-app-rewired`) to inject a Babel preset override. See snippet below. |
+
+For CRA via CRACO, add to `craco.config.js`:
+
+```js
+module.exports = {
+  babel: {
+    presets: [
+      ['@babel/preset-react', {
+        runtime: 'automatic',
+        importSource: '@flotrace/runtime-core',
+        development: true, // emits jsxDEV instead of jsx in dev builds
+      }],
+    ],
+  },
+};
+```
+
+### How to verify it's working
+
+1. **Run your app in dev mode**, open browser DevTools → Console.
+2. Paste: `globalThis[Symbol.for('flotrace.jsx-runtime-active')]` → should return `true`.
+3. **Open React DevTools → Components tab**, select any user component, then click the wrench icon to view its props in the Console. Run:
+   ```js
+   $r.memoizedProps[Symbol.for('flotrace.source')]
+   ```
+   You should see `{ fileName, lineNumber, columnNumber, callSiteId }`.
+
+If step 2 returns `undefined`, your bundler isn't picking up the tsconfig setting — see the bundler matrix above. The connection-status tooltip inside the FloTrace desktop app also shows **"JSX runtime: active ✓"** once the opt-in is wired up correctly.
+
+If step 2 returns `true` but step 3 returns `undefined` on a specific component, that fiber was created via a path that bypasses `jsxDEV` (e.g. `React.createElement` direct call inside a vendored dependency, or a server-rendered component hydrated client-side). User-authored Client Components in `.tsx` / `.jsx` files always pass through.
+
+### Performance budget
+
+| Cost | Target | Notes |
+|---|---|---|
+| Per-`jsxDEV` call overhead | **<10µs median** | Microbenchmark on V8. Path normalization + hash + inline detection + symbol-prop allocation. |
+| Per-commit cumulative overhead | **<55ms** | For a 5000-element user-component tree. Well below React's own commit cost. |
+| Symbol-prop memory | ~200 bytes per user-component fiber | ~1 MB for 5000 fibers. GC'd with the fiber on unmount. |
+| Ring buffer memory | 60 timestamps × callSiteId count | ~2.4 MB worst case for 5000 distinct callsites. Cleared on walker uninstall. |
+
+### Privacy
+
+The runtime captures **absolute paths** (needed so click-to-IDE can resolve files reliably across symlinks and workspaces). Absolute paths NEVER leave your machine via:
+
+- **WebSocket** → bound to `127.0.0.1` only; the desktop app is also local.
+- **Copy-as-Prompt** → the prompt builder calls `relativizePath(absPath, projectRoot)` before serialization. Output cites `src/Header.tsx:42`, never `/Users/foo/proj/src/Header.tsx:42`.
+
+The opt-in is **dev-only** by design. The production entry (`@flotrace/runtime-core/jsx-runtime`) is a pure passthrough to `react/jsx-runtime` — zero runtime overhead, no symbol injection, no metadata captured.
+
+### Reverting
+
+Delete the `jsxImportSource` line from `tsconfig.json` and restart your dev server. FloTrace falls back to its existing heuristic ladder (`_debugSource` → `_debugOwner` → `_debugStack`). No code changes needed in your app.
+
 ## Version compatibility
 
 `@flotrace/runtime-core@2.x` is the companion release for:
