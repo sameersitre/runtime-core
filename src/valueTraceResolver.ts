@@ -39,6 +39,7 @@ import { getZustandSnapshot } from './zustandTracker';
 import { getReduxSnapshot } from './reduxTracker';
 import { getTanstackSnapshot } from './tanstackQueryTracker';
 import type { TraceStep, ValueTrace } from './types';
+import { readJsxSourceFromFiber } from './jsxRuntimeUtils';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -412,6 +413,11 @@ export function resolveValueTrace(input: ValueTraceInput): Omit<ValueTrace, 'req
       componentName: rootComponentName,
       propPath: input.propPath,
       confidence: 'exact',
+      // P6: `fiber.memoizedProps[FLOTRACE_SOURCE]` is the JSX call site where
+      // this fiber was created — i.e., the `<Consumer .../>` JSX in the
+      // PARENT's source file. That's exactly the "drilled from `Parent.tsx:42`"
+      // attribution the user wants on the leaf prop step.
+      callSiteOfParentJsx: readJsxSourceFromFiber(fiber),
     });
   } else if (input.hookPath) {
     steps.push({
@@ -463,6 +469,11 @@ export function resolveValueTrace(input: ValueTraceInput): Omit<ValueTrace, 'req
                 componentName: ancestorName,
                 propPath: trailingSubPath.length > 0 ? [...matchPath, ...trailingSubPath] : matchPath,
                 confidence: matchConfidence,
+                // P6: attribute the parent JSX call site that drilled this
+                // prop. When the user opted into the JSX runtime AND this
+                // ancestor's fiber went through jsxDEV, the consumer sees
+                // "drilled from `Parent.tsx:42:8`" with a click-to-IDE link.
+                callSiteOfParentJsx: readJsxSourceFromFiber(current),
               });
             }
           } else {

@@ -518,4 +518,104 @@ describe('resolveValueTrace', () => {
     expect(kinds).toContain('store');
     expect(kinds).not.toContain('api');
   });
+
+  // ─── Milestone 8 Phase 6: JSX runtime attribution on prop steps ───────
+
+  describe('callSiteOfParentJsx on prop steps', () => {
+    /**
+     * Helper — build a fiber whose `memoizedProps` carries our `FLOTRACE_SOURCE`
+     * symbol (mimics what the dev jsx-runtime writes). Tests assert that the
+     * resolver reads it back via `readJsxSourceFromFiber` and attaches to
+     * every prop step.
+     */
+    function makeFiberWithJsxSource(opts: {
+      name: string;
+      props: Record<string, unknown>;
+      jsxSource: { fileName: string; lineNumber: number; columnNumber: number; callSiteId: string };
+      parent?: Fiber | null;
+    }): Fiber {
+      const FLOTRACE_SOURCE = Symbol.for('flotrace.source');
+      return makeFiber({
+        name: opts.name,
+        memoizedProps: {
+          ...opts.props,
+          [FLOTRACE_SOURCE]: opts.jsxSource,
+        } as Record<string, unknown>,
+        parent: opts.parent,
+      });
+    }
+
+    it('attaches callSiteOfParentJsx to the consumer prop step when fiber carries the JSX symbol', () => {
+      const user = { id: 1, name: 'Jane' };
+      const child = makeFiberWithJsxSource({
+        name: 'Profile',
+        props: { user },
+        jsxSource: {
+          fileName: 'src/Layout.tsx',
+          lineNumber: 42,
+          columnNumber: 8,
+          callSiteId: 'aaaaaaaa',
+        },
+      });
+      mockFiberRefMap.set('Profile', child);
+
+      const trace = resolveValueTrace({ nodeId: 'Profile', propPath: ['user'] });
+      const consumer = trace.steps[0];
+      expect(consumer.kind).toBe('prop');
+      if (consumer.kind !== 'prop') throw new Error('unreachable'); // narrow
+      expect(consumer.callSiteOfParentJsx).toEqual({
+        fileName: 'src/Layout.tsx',
+        lineNumber: 42,
+        columnNumber: 8,
+        callSiteId: 'aaaaaaaa',
+      });
+    });
+
+    it('attaches callSiteOfParentJsx to every ancestor prop step along the drilling chain', () => {
+      const user = { id: 1, name: 'Jane' };
+      // grandparent → parent → child, each carries a distinct jsxSource.
+      const grandparent = makeFiberWithJsxSource({
+        name: 'App',
+        props: { user },
+        jsxSource: { fileName: 'src/index.tsx', lineNumber: 5, columnNumber: 1, callSiteId: 'gggggggg' },
+      });
+      const parent = makeFiberWithJsxSource({
+        name: 'Layout',
+        props: { user },
+        jsxSource: { fileName: 'src/App.tsx', lineNumber: 20, columnNumber: 3, callSiteId: 'pppppppp' },
+        parent: grandparent,
+      });
+      const child = makeFiberWithJsxSource({
+        name: 'Profile',
+        props: { user },
+        jsxSource: { fileName: 'src/Layout.tsx', lineNumber: 42, columnNumber: 8, callSiteId: 'cccccccc' },
+        parent,
+      });
+      mockFiberRefMap.set('App', grandparent);
+      mockFiberRefMap.set('App/Layout', parent);
+      mockFiberRefMap.set('App/Layout/Profile', child);
+
+      const trace = resolveValueTrace({ nodeId: 'App/Layout/Profile', propPath: ['user'] });
+      expect(trace.steps.length).toBe(3);
+      // Consumer step → Profile's own jsxSource (= where Layout rendered <Profile>).
+      expect((trace.steps[0] as { callSiteOfParentJsx?: { callSiteId: string } }).callSiteOfParentJsx?.callSiteId).toBe('cccccccc');
+      // Ancestor step 1 → Layout's jsxSource (= where App rendered <Layout>).
+      expect((trace.steps[1] as { callSiteOfParentJsx?: { callSiteId: string } }).callSiteOfParentJsx?.callSiteId).toBe('pppppppp');
+      // Ancestor step 2 → App's jsxSource.
+      expect((trace.steps[2] as { callSiteOfParentJsx?: { callSiteId: string } }).callSiteOfParentJsx?.callSiteId).toBe('gggggggg');
+    });
+
+    it('leaves callSiteOfParentJsx undefined when the fiber has no JSX symbol (non-opted-in user)', () => {
+      const user = { id: 1, name: 'Jane' };
+      // Plain makeFiber — no FLOTRACE_SOURCE on memoizedProps.
+      const child = makeFiber({ name: 'Profile', memoizedProps: { user } });
+      mockFiberRefMap.set('Profile', child);
+
+      const trace = resolveValueTrace({ nodeId: 'Profile', propPath: ['user'] });
+      const consumer = trace.steps[0];
+      expect(consumer.kind).toBe('prop');
+      if (consumer.kind !== 'prop') throw new Error('unreachable');
+      expect(consumer.callSiteOfParentJsx).toBeUndefined();
+    });
+  });
 });

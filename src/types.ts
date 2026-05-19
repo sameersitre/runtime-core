@@ -896,6 +896,13 @@ export type TraceStep =
       /** If this step came via a rename edge in the drilling graph. */
       renamedFrom?: string;
       confidence: TraceConfidence;
+      /**
+       * JSX-runtime attribution of the PARENT fiber that wrote the value into
+       * this prop (Milestone 8 Phase 6). Captured by `readJsxSourceFromFiber`
+       * on the ancestor at trace-resolution time. Undefined when the parent
+       * fiber lacks attribution.
+       */
+      callSiteOfParentJsx?: FlotraceJsxSource;
     }
   | {
       kind: 'hook-state';
