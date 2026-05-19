@@ -612,6 +612,8 @@ export interface CascadeNode {
   children: CascadeNode[];
   depth: number;
   isMemoized: boolean;
+  /** JSX-runtime attribution (Milestone 8 Phase 6) — mirror of shared LiveTreeNode field. */
+  jsxSource?: FlotraceJsxSource;
 }
 
 export type LanePriority =
@@ -658,6 +660,8 @@ export interface PropDrillingChainNode {
   role: 'source' | 'passthrough' | 'consumer';
   hookCount: number;
   hasContextHook: boolean;
+  /** JSX-runtime attribution (Milestone 8 Phase 6). */
+  jsxSource?: FlotraceJsxSource;
 }
 
 export interface PropDrillingChain {

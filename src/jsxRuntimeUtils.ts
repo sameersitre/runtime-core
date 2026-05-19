@@ -108,6 +108,43 @@ export function computeCallSiteId(source: JsxSourceArg): string {
   return (hash >>> 0).toString(16).padStart(8, '0');
 }
 
+/**
+ * Read the JSX-runtime source attribution off a fiber's memoized props. Set
+ * by the optional `@flotrace/runtime-core/jsx-dev-runtime` opt-in via a
+ * symbol-keyed prop that survives React's prop pipeline but doesn't appear
+ * in `Object.keys` / React unknown-DOM-prop warnings.
+ *
+ * Returns `undefined` when the user hasn't opted in OR the fiber was created
+ * by a path that bypasses jsxDEV (classic runtime, SSR-hydrated fiber,
+ * `React.createElement` direct call inside a vendored dep). Caller falls
+ * back to the existing heuristic ladder.
+ *
+ * Validation: only the shape we care about (`fileName`/`lineNumber`/
+ * `columnNumber`/`callSiteId` all strings/numbers). Defensive against a
+ * malformed `Symbol.for('flotrace.source')` collision from unrelated tooling.
+ *
+ * Generic over the fiber-like shape — works for both the full `Fiber` type
+ * in `fiberTreeWalker.ts` and the minimal subset used by `cascadeAnalyzer.ts`.
+ */
+export function readJsxSourceFromFiber(
+  fiber: { memoizedProps: Record<string, unknown> | null },
+): FlotraceJsxSource | undefined {
+  const props = fiber.memoizedProps;
+  if (!props) return undefined;
+  const raw = (props as Record<string | symbol, unknown>)[FLOTRACE_SOURCE];
+  if (!raw || typeof raw !== 'object') return undefined;
+  const obj = raw as Record<string, unknown>;
+  if (
+    typeof obj.fileName !== 'string' ||
+    typeof obj.lineNumber !== 'number' ||
+    typeof obj.columnNumber !== 'number' ||
+    typeof obj.callSiteId !== 'string'
+  ) {
+    return undefined;
+  }
+  return raw as FlotraceJsxSource;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Per-callsite render ring buffer
 // ─────────────────────────────────────────────────────────────────────────────

@@ -424,6 +424,11 @@ function runAnalysis(
             role,
             hookCount: hookCounts.get(p.nodeId) ?? 0,
             hasContextHook: contextFlags.get(p.nodeId) ?? false,
+            // P6: propagate JSX-runtime attribution from the tree node so the
+            // drill-chain detail can render `(file:line)` per step + click-
+            // to-IDE on each component along the chain. Undefined when the
+            // user hasn't opted into the JSX runtime.
+            jsxSource: n?.jsxSource,
           };
         });
 

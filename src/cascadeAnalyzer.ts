@@ -17,6 +17,7 @@
  */
 
 import type { CascadeRecord, CascadeNode, CascadeReason, TriggerRecord } from './types';
+import { readJsxSourceFromFiber } from './jsxRuntimeUtils';
 import { classifyLanes, getFinishedLanes } from './laneDetector';
 import { getFiberDisplayName } from './fiberUtils';
 
@@ -289,6 +290,10 @@ function buildCascadeTree(
       children: [],
       depth,
       isMemoized: isMemoizedFiber(fiber),
+      // P6: JSX-runtime attribution — read from fiber.memoizedProps directly.
+      // Same source the walker uses, so cascade nodes align with LiveTreeNode
+      // attribution for the same user component.
+      jsxSource: readJsxSourceFromFiber(fiber),
     };
 
     totalComponents++;

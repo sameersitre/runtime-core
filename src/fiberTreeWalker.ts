@@ -13,7 +13,7 @@
  */
 
 import type { LiveTreeNode, RuntimeTreeDiffMessage, SerializedValue, DetailedRenderReason, PropChange, HookInfo, EffectInfo, SourceConfidence } from "./types";
-import { FLOTRACE_SOURCE, type FlotraceJsxSource } from "./jsxRuntimeUtils";
+import { readJsxSourceFromFiber, type FlotraceJsxSource } from "./jsxRuntimeUtils";
 import { serializeValue, serializeProps } from "./serializer";
 import { getWebSocketClient } from "./websocketClient";
 import { inspectHooks } from "./hookInspector";
@@ -628,38 +628,6 @@ const FRAMEWORK_PATH_PATTERNS: RegExp[] = [
  * Platform adapters can inject extra names/patterns via
  * `installFiberTreeWalker({ frameworkComponentNames, frameworkPathPatterns })`.
  */
-/**
- * Read the JSX-runtime source attribution off a fiber's memoized props. Set
- * by the optional `@flotrace/runtime-core/jsx-dev-runtime` opt-in via a
- * symbol-keyed prop that survives React's prop pipeline but doesn't appear in
- * `Object.keys` / React unknown-DOM-prop warnings.
- *
- * Returns `undefined` when the user hasn't opted in OR the fiber was created
- * by a path that bypasses jsxDEV (classic runtime, server-rendered fiber
- * hydrated client-side, framework wrapper that calls React.createElement
- * directly). Caller falls back to the existing heuristic ladder.
- *
- * Validation: only the shape we care about (`fileName`/`lineNumber`/
- * `columnNumber`/`callSiteId` all strings/numbers). Defensive against a
- * malformed Symbol.for collision from unrelated tooling.
- */
-function readJsxSourceFromFiber(fiber: Fiber): FlotraceJsxSource | undefined {
-  const props = fiber.memoizedProps;
-  if (!props) return undefined;
-  const raw = (props as Record<string | symbol, unknown>)[FLOTRACE_SOURCE];
-  if (!raw || typeof raw !== 'object') return undefined;
-  const obj = raw as Record<string, unknown>;
-  if (
-    typeof obj.fileName !== 'string' ||
-    typeof obj.lineNumber !== 'number' ||
-    typeof obj.columnNumber !== 'number' ||
-    typeof obj.callSiteId !== 'string'
-  ) {
-    return undefined;
-  }
-  return raw as FlotraceJsxSource;
-}
-
 /**
  * Resolve the most useful source-file path for a fiber, trying evidence
  * sources in priority order:
