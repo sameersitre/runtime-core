@@ -39,7 +39,12 @@ export {
   markJsxRuntimeActive,
   isJsxRuntimeActive,
   detectInlineLiterals,
+  // Phase 4 — emission helpers consumed by FloTraceProvider's periodic timer
+  // (callSiteMetrics) + duplicate-key emitter registration.
+  computeCallSiteMetricsPayload,
+  setDuplicateKeyEmitter,
 } from './jsxRuntimeUtils';
+export type { DuplicateKeyEvent } from './jsxRuntimeUtils';
 
 // Console-Free Debugging types
 export type {
@@ -75,6 +80,9 @@ export type {
   RuntimeNextjsContextMessage,
   RuntimeRscPayloadMessage,
   RuntimeHydrationEventMessage,
+  // JSX runtime (Milestone 8 Phase 4)
+  RuntimeCallSiteMetricsMessage,
+  RuntimeDuplicateKeyMessage,
 } from './types';
 
 // Value Lineage resolver

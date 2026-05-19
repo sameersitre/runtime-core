@@ -7,7 +7,7 @@
  *   - vitest-default-dummy-data + vitest-faker-utilities: baselines in
  *     `.test.fixtures.ts`, builders in `.test.builders.ts`.
  */
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import {
   FLOTRACE_SOURCE,
   JSX_RUNTIME_ACTIVE_KEY,
@@ -20,7 +20,13 @@ import {
   markJsxRuntimeActive,
   isJsxRuntimeActive,
   __resetJsxRuntimeAdoptionForTesting,
+  __resetDuplicateKeyStateForTesting,
   detectInlineLiterals,
+  computeCallSiteMetricsPayload,
+  recordJsxKey,
+  setDuplicateKeyEmitter,
+  type DuplicateKeyEvent,
+  type FlotraceJsxSource,
 } from './jsxRuntimeUtils';
 import { BUNDLER_PATH_STYLES } from './jsxRuntimeUtils.test.fixtures';
 import { createJsxSourceArg } from './jsxRuntimeUtils.test.builders';
@@ -371,6 +377,231 @@ describe('jsxRuntimeUtils', () => {
         items: 'arr',
         style: 'obj',
       });
+    });
+  });
+
+  // ─── Phase 4: callSiteMetrics + duplicate-key emission ──────────────────
+
+  describe('computeCallSiteMetricsPayload', () => {
+    test('returns null when no callsite has recent activity', () => {
+      clearCallSiteRenders();
+      expect(computeCallSiteMetricsPayload(5000, 10000)).toBeNull();
+    });
+
+    test('returns null when all callsite buffers exist but every entry is outside the window', () => {
+      clearCallSiteRenders();
+      // Record at t=100, query at t=10000 with 5s window → cutoff=5000 → 100 < 5000.
+      recordCallSiteRender('a', 100);
+      recordCallSiteRender('b', 500);
+      expect(computeCallSiteMetricsPayload(5000, 10000)).toBeNull();
+    });
+
+    test('emits one entry per callsite with non-zero activity (renders/sec value)', () => {
+      clearCallSiteRenders();
+      const now = 10000;
+      // 5 renders evenly over the last 5s for "hot" → 1/sec
+      for (let i = 0; i < 5; i++) recordCallSiteRender('hot', now - i * 1000);
+      // 1 render at t=now for "warm" → 0.2/sec
+      recordCallSiteRender('warm', now);
+      // 1 render outside window for "cold" → 0/sec (excluded)
+      recordCallSiteRender('cold', 100);
+      const payload = computeCallSiteMetricsPayload(5000, now);
+      expect(payload).not.toBeNull();
+      expect(Object.keys(payload!)).toEqual(expect.arrayContaining(['hot', 'warm']));
+      expect(Object.keys(payload!)).not.toContain('cold');
+      expect(payload!.hot).toBeCloseTo(1, 5);
+      expect(payload!.warm).toBeCloseTo(0.2, 5);
+    });
+  });
+
+  describe('duplicate-key detection — recordJsxKey + microtask flush', () => {
+    const SOURCE_A: FlotraceJsxSource = {
+      fileName: 'src/List.tsx',
+      lineNumber: 10,
+      columnNumber: 8,
+      callSiteId: 'aaaaaaaa',
+    };
+    const SOURCE_B: FlotraceJsxSource = {
+      fileName: 'src/Other.tsx',
+      lineNumber: 20,
+      columnNumber: 4,
+      callSiteId: 'bbbbbbbb',
+    };
+
+    test('emits ONE event per (callSiteId, key) pair when count ≥ 2', async () => {
+      __resetDuplicateKeyStateForTesting();
+      const emitter = vi.fn<(evt: DuplicateKeyEvent) => void>();
+      setDuplicateKeyEmitter(emitter);
+
+      // Two JSX calls at the SAME callsite with the SAME key — classic
+      // `items.map(item => <Row key={item.id}/>)` where two items have the
+      // same id.
+      recordJsxKey(SOURCE_A, '42');
+      recordJsxKey(SOURCE_A, '42');
+      await Promise.resolve(); // drain microtask queue
+
+      expect(emitter).toHaveBeenCalledTimes(1);
+      expect(emitter).toHaveBeenCalledWith({
+        callSiteId: 'aaaaaaaa',
+        fileName: 'src/List.tsx',
+        lineNumber: 10,
+        columnNumber: 8,
+        duplicateKey: '42',
+        occurrences: 2,
+      });
+    });
+
+    test('does NOT emit when a key appears only once per callsite', async () => {
+      __resetDuplicateKeyStateForTesting();
+      const emitter = vi.fn<(evt: DuplicateKeyEvent) => void>();
+      setDuplicateKeyEmitter(emitter);
+
+      recordJsxKey(SOURCE_A, '1');
+      recordJsxKey(SOURCE_A, '2');
+      recordJsxKey(SOURCE_A, '3');
+      await Promise.resolve();
+
+      expect(emitter).not.toHaveBeenCalled();
+    });
+
+    test('keeps batches distinct across separate microtask drains (commits)', async () => {
+      __resetDuplicateKeyStateForTesting();
+      const emitter = vi.fn<(evt: DuplicateKeyEvent) => void>();
+      setDuplicateKeyEmitter(emitter);
+
+      // First commit — 2 duplicates → emit once.
+      recordJsxKey(SOURCE_A, '42');
+      recordJsxKey(SOURCE_A, '42');
+      await Promise.resolve();
+      expect(emitter).toHaveBeenCalledTimes(1);
+
+      emitter.mockClear();
+
+      // Second commit — same key, but the new batch starts fresh. The
+      // SECOND time a key is recorded in the new batch, count climbs to 2,
+      // and emit fires again. If the batch leaked across commits, count
+      // would already be 3+ → still emits, but with occurrences=4.
+      recordJsxKey(SOURCE_A, '42');
+      recordJsxKey(SOURCE_A, '42');
+      await Promise.resolve();
+      expect(emitter).toHaveBeenCalledTimes(1);
+      expect(emitter).toHaveBeenCalledWith(
+        expect.objectContaining({ occurrences: 2 }),
+      );
+    });
+
+    test('coerces number + string keys to the same comparison value (matches React semantics)', async () => {
+      __resetDuplicateKeyStateForTesting();
+      const emitter = vi.fn<(evt: DuplicateKeyEvent) => void>();
+      setDuplicateKeyEmitter(emitter);
+
+      // React's reconciler coerces both to "1" — we mirror that so a mixed
+      // <X key="1"/><X key={1}/> at the same call site detects as a dupe.
+      recordJsxKey(SOURCE_A, '1');
+      recordJsxKey(SOURCE_A, 1);
+      await Promise.resolve();
+
+      expect(emitter).toHaveBeenCalledTimes(1);
+      expect(emitter).toHaveBeenCalledWith(
+        expect.objectContaining({ duplicateKey: '1', occurrences: 2 }),
+      );
+    });
+
+    test('does NOT emit for null or undefined keys (React treats those as "no key")', async () => {
+      __resetDuplicateKeyStateForTesting();
+      const emitter = vi.fn<(evt: DuplicateKeyEvent) => void>();
+      setDuplicateKeyEmitter(emitter);
+
+      recordJsxKey(SOURCE_A, null);
+      recordJsxKey(SOURCE_A, undefined);
+      recordJsxKey(SOURCE_A, null);
+      await Promise.resolve();
+
+      expect(emitter).not.toHaveBeenCalled();
+    });
+
+    test('does NOT throw on Symbol keys (String(symbol) would TypeError)', async () => {
+      // Real footgun: our wrapper runs BEFORE React processes the key, so a
+      // user JSX call with `key={Symbol()}` would crash the wrapper if we
+      // String()-coerced unconditionally. Filter to primitive types only.
+      __resetDuplicateKeyStateForTesting();
+      const emitter = vi.fn<(evt: DuplicateKeyEvent) => void>();
+      setDuplicateKeyEmitter(emitter);
+
+      expect(() => recordJsxKey(SOURCE_A, Symbol('x'))).not.toThrow();
+      expect(() => recordJsxKey(SOURCE_A, Symbol('x'))).not.toThrow();
+      await Promise.resolve();
+
+      // Symbol keys aren't tracked → no duplicate event fires even on repeats.
+      expect(emitter).not.toHaveBeenCalled();
+    });
+
+    test('does NOT false-positive on object keys (String({}) === "[object Object]")', async () => {
+      // Two distinct {} objects would both coerce to `'[object Object]'` and
+      // collide in the batch map as duplicates of each other. React rejects
+      // non-primitive keys anyway — surface that via React's own warning, not
+      // a misleading "duplicate key" report.
+      __resetDuplicateKeyStateForTesting();
+      const emitter = vi.fn<(evt: DuplicateKeyEvent) => void>();
+      setDuplicateKeyEmitter(emitter);
+
+      recordJsxKey(SOURCE_A, { foo: 1 });
+      recordJsxKey(SOURCE_A, { bar: 2 });
+      await Promise.resolve();
+
+      expect(emitter).not.toHaveBeenCalled();
+    });
+
+    test('detects duplicates on number + boolean keys (primitive coercion still applies)', async () => {
+      __resetDuplicateKeyStateForTesting();
+      const emitter = vi.fn<(evt: DuplicateKeyEvent) => void>();
+      setDuplicateKeyEmitter(emitter);
+
+      // Boolean keys are valid (rare but legal in React). Two `true`s at the
+      // same callsite SHOULD detect.
+      recordJsxKey(SOURCE_A, true);
+      recordJsxKey(SOURCE_A, true);
+      await Promise.resolve();
+
+      expect(emitter).toHaveBeenCalledTimes(1);
+      expect(emitter).toHaveBeenCalledWith(
+        expect.objectContaining({ duplicateKey: 'true', occurrences: 2 }),
+      );
+    });
+
+    test('separates duplicates by callSiteId — two different call sites with the same key do not collide', async () => {
+      __resetDuplicateKeyStateForTesting();
+      const emitter = vi.fn<(evt: DuplicateKeyEvent) => void>();
+      setDuplicateKeyEmitter(emitter);
+
+      recordJsxKey(SOURCE_A, 'shared');
+      recordJsxKey(SOURCE_B, 'shared');
+      await Promise.resolve();
+
+      expect(emitter).not.toHaveBeenCalled();
+    });
+
+    test('emits N occurrences when key appears N times (≥ 3 case)', async () => {
+      __resetDuplicateKeyStateForTesting();
+      const emitter = vi.fn<(evt: DuplicateKeyEvent) => void>();
+      setDuplicateKeyEmitter(emitter);
+
+      for (let i = 0; i < 5; i++) recordJsxKey(SOURCE_A, 'dup');
+      await Promise.resolve();
+
+      expect(emitter).toHaveBeenCalledTimes(1);
+      expect(emitter).toHaveBeenCalledWith(
+        expect.objectContaining({ occurrences: 5 }),
+      );
+    });
+
+    test('silently drops events when no emitter is registered', async () => {
+      __resetDuplicateKeyStateForTesting();
+      // No setDuplicateKeyEmitter call — null emitter.
+      recordJsxKey(SOURCE_A, 'x');
+      recordJsxKey(SOURCE_A, 'x');
+      // Should NOT throw on flush — the microtask just clears the batch.
+      await expect(Promise.resolve()).resolves.toBeUndefined();
     });
   });
 });

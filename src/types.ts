@@ -69,6 +69,9 @@ export type RuntimeMessage =
   | RuntimeNextjsContextMessage
   | RuntimeRscPayloadMessage
   | RuntimeHydrationEventMessage
+  // JSX runtime (Milestone 8 Phase 4)
+  | RuntimeCallSiteMetricsMessage
+  | RuntimeDuplicateKeyMessage
   | RuntimeNetworkRequestMessage
   | RuntimeLocalStateCorrelationMessage
   | RuntimeValueTraceMessage
@@ -102,6 +105,14 @@ export interface RuntimeReadyMessage {
    *  release script keeps runtime-core pinned identically, so a separate
    *  core-version field would be redundant. */
   runtimeVersion?: string;
+  /**
+   * Milestone 8 Phase 5 — adoption signal for the JSX-runtime opt-in
+   * (`"jsxImportSource": "@flotrace/runtime-core"`). `true` when the dev
+   * runtime's global sentinel has been set (i.e. at least one user
+   * component went through `jsxDEV`). Desktop forwards to telemetry so
+   * the admin dashboard can track rollout rate. No PII; one-time boolean.
+   */
+  jsxRuntimeActive?: boolean;
 }
 
 export interface RuntimeRenderMessage {
@@ -744,6 +755,54 @@ export interface RuntimeHydrationEventMessage {
   kind: 'complete' | 'mismatch';
   durationMs?: number;
   errorMessage?: string;
+  timestamp: number;
+}
+
+// ============================================================================
+// JSX Runtime — Milestone 8 Phase 4 (Hot Call Sites + Duplicate Keys)
+// ============================================================================
+
+/**
+ * Per-callsite render frequency snapshot. Emitted at most once per second by
+ * the runtime when the JSX-runtime opt-in is active — the ring buffer in
+ * `jsxRuntimeUtils.ts` is the source of truth, this message is a periodic
+ * compaction of the buffer into "renders/sec over last 5s" so the desktop
+ * doesn't need to mirror the buffer.
+ *
+ * Independent of the React Profiler — works in concurrent rendering where the
+ * Profiler may miss commits. Only emitted when there's at least one callsite
+ * with non-zero recent activity (no metric-flood on idle apps).
+ */
+export interface RuntimeCallSiteMetricsMessage {
+  type: 'runtime:callSiteMetrics';
+  /** Map of callSiteId → renders/sec over the last 5-second window. */
+  metrics: Record<string, number>;
+  timestamp: number;
+}
+
+/**
+ * Duplicate-key warning. Emitted by the JSX runtime when it observes the same
+ * `(callSiteId, key)` pair on two or more JSX calls within a single commit —
+ * the classic `{items.map(item => <Row key={item.id} />)}` pattern where
+ * `item.id` repeats. React logs a console warning for this; we surface it
+ * with full file:line attribution so the user can navigate directly to the
+ * map call site.
+ *
+ * One message per (callSiteId, duplicateKey) per emission window — the
+ * runtime de-duplicates so a list with 100 duplicate rows doesn't spam 100
+ * messages.
+ */
+export interface RuntimeDuplicateKeyMessage {
+  type: 'runtime:duplicateKey';
+  /** The JSX call site that produced the duplicates. */
+  callSiteId: string;
+  fileName: string;
+  lineNumber: number;
+  columnNumber: number;
+  /** The key value that appeared more than once. */
+  duplicateKey: string;
+  /** How many times the same key fired at this call site in the commit. */
+  occurrences: number;
   timestamp: number;
 }
 

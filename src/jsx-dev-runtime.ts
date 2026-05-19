@@ -39,6 +39,7 @@ import {
   normalizeJsxSourcePath,
   detectInlineLiterals,
   recordCallSiteRender,
+  recordJsxKey,
   markJsxRuntimeActive,
   type FlotraceJsxSource,
 } from './jsxRuntimeUtils';
@@ -105,6 +106,11 @@ export function jsxDEV(
       };
 
   recordCallSiteRender(callSiteId);
+  // Record the React key for duplicate detection — emits a
+  // `runtime:duplicateKey` event (via the registered emitter) when the same
+  // (callSiteId, key) pair appears two or more times in one synchronous
+  // render pass. Bails internally when key is null/undefined.
+  recordJsxKey(flotraceSource, key);
 
   // Symbol-keyed prop is invisible to `Object.keys` / `JSON.stringify` / React
   // unknown-DOM-prop warnings but survives the prop pipeline. Allocates one

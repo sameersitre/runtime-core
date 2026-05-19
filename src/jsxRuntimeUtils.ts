@@ -180,6 +180,149 @@ export function clearCallSiteRenders(): void {
   callSiteRenders.clear();
 }
 
+/**
+ * Compute a `runtime:callSiteMetrics` payload from the ring buffer — one
+ * entry per callsite that has rendered within the last `windowMs` ms (5s
+ * default). Callsites with zero recent activity are omitted so the wire-
+ * format payload stays small on idle apps.
+ *
+ * Returns `null` when no callsite has activity → caller skips the WebSocket
+ * send entirely. This is load-bearing: a 5000-callsite app with no live
+ * renders should NOT emit a 5000-entry map of zeros every second.
+ *
+ * The `now` arg lets tests inject deterministic timestamps.
+ */
+export function computeCallSiteMetricsPayload(
+  windowMs: number = 5000,
+  now: number = performance.now(),
+): Record<string, number> | null {
+  let out: Record<string, number> | null = null;
+  for (const [callSiteId] of callSiteRenders) {
+    const rate = getCallSiteRenderRate(callSiteId, windowMs, now);
+    if (rate > 0) {
+      (out ??= {})[callSiteId] = rate;
+    }
+  }
+  return out;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Duplicate-key detection
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Payload emitted whenever a JSX call site fires twice in the same commit
+ * with the same React `key`. Shape mirrors `RuntimeDuplicateKeyMessage` minus
+ * the wire-format envelope (`type` + `timestamp`) — those are added by the
+ * caller (typically `FloTraceProvider`) at WS-send time.
+ */
+export interface DuplicateKeyEvent {
+  callSiteId: string;
+  fileName: string;
+  lineNumber: number;
+  columnNumber: number;
+  duplicateKey: string;
+  occurrences: number;
+}
+
+/**
+ * Settable emitter — `FloTraceProvider` registers a callback that forwards
+ * `runtime:duplicateKey` messages to the WS client. Keeping the transport
+ * out of jsxRuntimeUtils means this file stays free of WS-client / Provider
+ * dependencies, so the jsx-dev-runtime entry bundle stays minimal.
+ *
+ * When no emitter is registered (e.g. user installed the JSX runtime
+ * without the provider), detected duplicates are silently dropped.
+ */
+let duplicateKeyEmitter: ((evt: DuplicateKeyEvent) => void) | null = null;
+
+export function setDuplicateKeyEmitter(
+  emitter: ((evt: DuplicateKeyEvent) => void) | null,
+): void {
+  duplicateKeyEmitter = emitter;
+}
+
+/**
+ * Per-commit batch state: `(callSiteId + '|' + keyValue) → {count, source}`.
+ * The wrapper calls `recordJsxKey` for every JSX element that carries a key;
+ * a microtask flush at the end of the synchronous render pass detects pairs
+ * with `count ≥ 2` and emits a `DuplicateKeyEvent` for each.
+ *
+ * Microtask boundary is a close approximation of React's commit phase — React
+ * 18+ schedules its work in microtasks, so a full render pass (and its JSX
+ * eval) drains before the microtask flush runs. For React 17, the heuristic
+ * over-collects across commits but never under-reports duplicates.
+ */
+const currentKeyBatch = new Map<string, { count: number; source: FlotraceJsxSource }>();
+let keyBatchFlushScheduled = false;
+
+export function recordJsxKey(source: FlotraceJsxSource, key: unknown): void {
+  // React accepts string + number keys; `null` / `undefined` mean "no key
+  // specified" which can't be a duplicate. Coerce to string for the map key
+  // — `<X key="1"/>` and `<X key={1}/>` should detect as duplicates of each
+  // other (React itself coerces, same semantics).
+  if (key === null || key === undefined) return;
+  // `String(Symbol())` throws TypeError. `String({}) === '[object Object]'`
+  // would silently collide multiple distinct object keys at the same call
+  // site. React itself rejects non-primitive keys but only warns — our
+  // wrapper runs FIRST, so we have to be defensive. Ignore non-primitive
+  // keys entirely; duplicate detection on weird keys is worthless anyway
+  // (the user's bug is "non-primitive key" — surfaced by React's own
+  // warning — not "duplicate key").
+  const keyType = typeof key;
+  if (keyType !== 'string' && keyType !== 'number' && keyType !== 'boolean') return;
+  const keyStr = String(key);
+  const batchKey = `${source.callSiteId}|${keyStr}`;
+  const entry = currentKeyBatch.get(batchKey);
+  if (entry !== undefined) {
+    entry.count++;
+  } else {
+    currentKeyBatch.set(batchKey, { count: 1, source });
+  }
+  if (!keyBatchFlushScheduled) {
+    keyBatchFlushScheduled = true;
+    queueMicrotask(flushDuplicateKeys);
+  }
+}
+
+function flushDuplicateKeys(): void {
+  keyBatchFlushScheduled = false;
+  const emitter = duplicateKeyEmitter;
+  if (emitter === null) {
+    currentKeyBatch.clear();
+    return;
+  }
+  for (const [batchKey, { count, source }] of currentKeyBatch) {
+    if (count < 2) continue;
+    // batchKey shape is "<callSiteId>|<keyValue>" — slice after the
+    // delimiter; callSiteId is fixed 8 hex chars but using slice on the
+    // explicit `|` index keeps this robust if the hash format ever widens.
+    const sep = batchKey.indexOf('|');
+    const duplicateKey = batchKey.slice(sep + 1);
+    emitter({
+      callSiteId: source.callSiteId,
+      fileName: source.fileName,
+      lineNumber: source.lineNumber,
+      columnNumber: source.columnNumber,
+      duplicateKey,
+      occurrences: count,
+    });
+  }
+  currentKeyBatch.clear();
+}
+
+/**
+ * Test-only: reset emitter + batch + scheduled flag. Tests assert on
+ * emit-or-not-emit behaviour, and queueMicrotask makes that asynchronous —
+ * tests use `await Promise.resolve()` to drain the microtask queue, then
+ * read the spy.
+ */
+export function __resetDuplicateKeyStateForTesting(): void {
+  duplicateKeyEmitter = null;
+  currentKeyBatch.clear();
+  keyBatchFlushScheduled = false;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Adoption sentinel
 // ─────────────────────────────────────────────────────────────────────────────
