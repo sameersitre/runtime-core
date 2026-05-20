@@ -18,7 +18,12 @@
 import type { Fiber, FiberHookState, FiberEffect } from './fiberTreeWalker';
 import type { HookInfo, HookType, SerializedValue } from './types';
 import { serializeValue } from './serializer';
-import { HOOK_HAS_EFFECT, HOOK_INSERTION, HOOK_LAYOUT, HOOK_PASSIVE, collectCircularList } from './fiberConstants';
+import {
+  HOOK_INSERTION,
+  HOOK_LAYOUT,
+  HOOK_PASSIVE,
+  collectCircularList,
+} from './fiberConstants';
 
 /**
  * Inspect all hooks in a fiber's memoizedState linked list.
@@ -45,7 +50,11 @@ export function inspectHooks(fiber: Fiber): HookInfo[] {
       hooks.push(hookInfo);
 
       // Advance effect index if this hook was classified as an effect
-      if (hookInfo.type === 'useEffect' || hookInfo.type === 'useLayoutEffect' || hookInfo.type === 'useInsertionEffect') {
+      if (
+        hookInfo.type === 'useEffect' ||
+        hookInfo.type === 'useLayoutEffect' ||
+        hookInfo.type === 'useInsertionEffect'
+      ) {
         effectIndex++;
       }
     } catch (error) {
@@ -82,7 +91,8 @@ function classifyHook(
   if (state.queue !== null) {
     const queue = state.queue;
     // useReducer uses a custom reducer; useState uses React's basicStateReducer
-    const isReducer = queue.lastRenderedReducer &&
+    const isReducer =
+      queue.lastRenderedReducer &&
       typeof queue.lastRenderedReducer === 'function' &&
       queue.lastRenderedReducer.name !== '' &&
       queue.lastRenderedReducer.name !== 'basicStateReducer';
@@ -95,7 +105,12 @@ function classifyHook(
   }
 
   // useRef: memoizedState is { current: <value> } with exactly one key
-  if (ms !== null && typeof ms === 'object' && !Array.isArray(ms) && 'current' in (ms as Record<string, unknown>)) {
+  if (
+    ms !== null &&
+    typeof ms === 'object' &&
+    !Array.isArray(ms) &&
+    'current' in (ms as Record<string, unknown>)
+  ) {
     const keys = Object.keys(ms as Record<string, unknown>);
     if (keys.length === 1 && keys[0] === 'current') {
       return {
@@ -124,21 +139,32 @@ function classifyHook(
     // Effects store their tag in memoizedState for function components
     if (typeof ms === 'number' || isEffectShape(ms)) {
       const type: HookType =
-        (effect.tag & HOOK_PASSIVE) !== 0 ? 'useEffect' :
-        (effect.tag & HOOK_LAYOUT) !== 0 ? 'useLayoutEffect' :
-        (effect.tag & HOOK_INSERTION) !== 0 ? 'useInsertionEffect' : 'useEffect';
+        (effect.tag & HOOK_PASSIVE) !== 0
+          ? 'useEffect'
+          : (effect.tag & HOOK_LAYOUT) !== 0
+            ? 'useLayoutEffect'
+            : (effect.tag & HOOK_INSERTION) !== 0
+              ? 'useInsertionEffect'
+              : 'useEffect';
 
       return {
         index,
         type,
         value: { __type: 'function', name: 'effect' } as SerializedValue,
-        deps: effect.deps ? effect.deps.map((d: unknown) => serializeValue(d, 0, new WeakSet())) : undefined,
+        deps: effect.deps
+          ? effect.deps.map((d: unknown) => serializeValue(d, 0, new WeakSet()))
+          : undefined,
       };
     }
   }
 
   // useTransition: memoizedState is [boolean, startTransition]
-  if (Array.isArray(ms) && ms.length === 2 && typeof ms[0] === 'boolean' && typeof ms[1] === 'function') {
+  if (
+    Array.isArray(ms) &&
+    ms.length === 2 &&
+    typeof ms[0] === 'boolean' &&
+    typeof ms[1] === 'function'
+  ) {
     return {
       index,
       type: 'useTransition',
@@ -173,45 +199,66 @@ function classifyFromDebugLabel(
 
   // Map debug labels to HookType
   const labelMap: Record<string, HookType> = {
-    'usestate': 'useState',
-    'usereducer': 'useReducer',
-    'useref': 'useRef',
-    'usememo': 'useMemo',
-    'usecallback': 'useCallback',
-    'useeffect': 'useEffect',
-    'uselayouteffect': 'useLayoutEffect',
-    'useinsertioneffect': 'useInsertionEffect',
-    'usecontext': 'useContext',
-    'useimperativehandle': 'useImperativeHandle',
-    'usedebugvalue': 'useDebugValue',
-    'usetransition': 'useTransition',
-    'usedeferredvalue': 'useDeferredValue',
-    'useid': 'useId',
-    'usesyncexternalstore': 'useSyncExternalStore',
-    'useoptimistic': 'useOptimistic',
-    'useformstatus': 'useFormStatus',
+    usestate: 'useState',
+    usereducer: 'useReducer',
+    useref: 'useRef',
+    usememo: 'useMemo',
+    usecallback: 'useCallback',
+    useeffect: 'useEffect',
+    uselayouteffect: 'useLayoutEffect',
+    useinsertioneffect: 'useInsertionEffect',
+    usecontext: 'useContext',
+    useimperativehandle: 'useImperativeHandle',
+    usedebugvalue: 'useDebugValue',
+    usetransition: 'useTransition',
+    usedeferredvalue: 'useDeferredValue',
+    useid: 'useId',
+    usesyncexternalstore: 'useSyncExternalStore',
+    useoptimistic: 'useOptimistic',
+    useformstatus: 'useFormStatus',
   };
 
   const hookType: HookType = labelMap[normalizedLabel] ?? 'unknown';
-  const base: HookInfo = { index, type: hookType, value: serializeValue(ms, 0, new WeakSet()), debugLabel };
+  const base: HookInfo = {
+    index,
+    type: hookType,
+    value: serializeValue(ms, 0, new WeakSet()),
+    debugLabel,
+  };
 
   // Add deps for effect hooks
-  if (hookType === 'useEffect' || hookType === 'useLayoutEffect' || hookType === 'useInsertionEffect') {
+  if (
+    hookType === 'useEffect' ||
+    hookType === 'useLayoutEffect' ||
+    hookType === 'useInsertionEffect'
+  ) {
     if (effectIdx < effects.length) {
       const effect = effects[effectIdx];
       base.value = { __type: 'function', name: 'effect' } as SerializedValue;
-      base.deps = effect.deps ? effect.deps.map((d: unknown) => serializeValue(d, 0, new WeakSet())) : undefined;
+      base.deps = effect.deps
+        ? effect.deps.map((d: unknown) => serializeValue(d, 0, new WeakSet()))
+        : undefined;
     }
   }
 
   // Add deps for useMemo/useCallback
-  if ((hookType === 'useMemo' || hookType === 'useCallback') && Array.isArray(ms) && ms.length === 2 && Array.isArray(ms[1])) {
+  if (
+    (hookType === 'useMemo' || hookType === 'useCallback') &&
+    Array.isArray(ms) &&
+    ms.length === 2 &&
+    Array.isArray(ms[1])
+  ) {
     base.value = serializeValue(ms[0], 0, new WeakSet());
     base.deps = ms[1].map((d: unknown) => serializeValue(d, 0, new WeakSet()));
   }
 
   // Extract ref current value
-  if (hookType === 'useRef' && ms !== null && typeof ms === 'object' && 'current' in (ms as Record<string, unknown>)) {
+  if (
+    hookType === 'useRef' &&
+    ms !== null &&
+    typeof ms === 'object' &&
+    'current' in (ms as Record<string, unknown>)
+  ) {
     base.value = serializeValue((ms as { current: unknown }).current, 0, new WeakSet());
   }
 
@@ -229,4 +276,3 @@ function isEffectShape(ms: unknown): boolean {
   }
   return false;
 }
-

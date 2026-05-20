@@ -138,8 +138,8 @@ describe('rscPayloadInterceptor', () => {
     });
 
     test('passes the original input + init through unchanged', async () => {
-      const original = vi.fn(
-        async (_input: RequestInfo | URL, _init?: RequestInit) => createStubResponse(),
+      const original = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        createStubResponse(),
       );
       globalThis.fetch = original as unknown as typeof fetch;
       installRscPayloadInterceptor(createStubClient());
@@ -262,9 +262,7 @@ describe('rscPayloadInterceptor', () => {
       // Behaviour-grouped: query stripping works for both `https://...` URLs
       // (parsed via URL constructor) and `/path?...` strings (via the fallback
       // split path).
-      const fullyQualified = asMessage(
-        await emitOnce({}, 'https://example.com/dashboard?_rsc=1'),
-      );
+      const fullyQualified = asMessage(await emitOnce({}, 'https://example.com/dashboard?_rsc=1'));
       expect(fullyQualified.route).toBe('/dashboard');
 
       const relative = asMessage(await emitOnce({}, '/api/data?_rsc=1'));

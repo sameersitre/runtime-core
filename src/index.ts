@@ -64,12 +64,7 @@ export type {
 } from './types';
 
 // Value Lineage (Variable Origin Tracing) types
-export type {
-  TraceConfidence,
-  TraceStep,
-  ValueTrace,
-  RuntimeValueTraceMessage,
-} from './types';
+export type { TraceConfidence, TraceStep, ValueTrace, RuntimeValueTraceMessage } from './types';
 
 // React 19+ & Next.js SSR runtime message types
 export type {
@@ -101,12 +96,7 @@ export {
   getDetailedRenderReason,
   getFiberRefMap,
 } from './fiberTreeWalker';
-export type {
-  Fiber,
-  FiberHookState,
-  FiberEffect,
-  FiberTreeWalkerOptions,
-} from './fiberTreeWalker';
+export type { Fiber, FiberHookState, FiberEffect, FiberTreeWalkerOptions } from './fiberTreeWalker';
 
 // Fiber attribution helpers (used by network trackers)
 export {

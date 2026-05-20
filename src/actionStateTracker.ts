@@ -3,9 +3,9 @@
  * Emits runtime:actionState when isPending transitions or state changes.
  * Called by fiberTreeWalker after each successful tree build.
  */
-import type { FloTraceWebSocketClient } from "./websocketClient";
-import type { ActionStateEntry } from "./types";
-import { serializeValue } from "./serializer";
+import type { FloTraceWebSocketClient } from './websocketClient';
+import type { ActionStateEntry } from './types';
+import { serializeValue } from './serializer';
 
 /** Previous snapshot of action state per nodeId to detect changes */
 const prevActionStateMap = new Map<string, string>(); // nodeId → JSON snapshot
@@ -87,7 +87,9 @@ export function scanActionStateChanges(
       const entries = extractActionEntries(fiber);
       if (!entries) continue;
 
-      const snapshot = JSON.stringify(entries.map(e => ({ i: e.hookIndex, p: e.isPending, s: e.state })));
+      const snapshot = JSON.stringify(
+        entries.map((e) => ({ i: e.hookIndex, p: e.isPending, s: e.state })),
+      );
       if (prevActionStateMap.get(nodeId) === snapshot) continue;
       prevActionStateMap.set(nodeId, snapshot);
 

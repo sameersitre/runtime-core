@@ -32,8 +32,10 @@ let currentBatchId: string | null = null;
 
 function nextBatchId(): string {
   if (!currentBatchId) {
-    currentBatchId = String(Date.now()) + '-' + (Math.random() * 0xFFFF | 0).toString(16);
-    queueMicrotask(() => { currentBatchId = null; });
+    currentBatchId = String(Date.now()) + '-' + ((Math.random() * 0xffff) | 0).toString(16);
+    queueMicrotask(() => {
+      currentBatchId = null;
+    });
   }
   return currentBatchId;
 }
@@ -83,7 +85,7 @@ export function captureStack(): StackFrame[] {
         getFileName(): string | null;
         getLineNumber(): number | null;
         getColumnNumber(): number | null;
-      }>
+      }>,
     ) => {
       for (const site of callSites) {
         if (frames.length >= STACK_DEPTH_LIMIT) break;
@@ -152,10 +154,10 @@ interface FiberMinimal {
   alternate?: FiberMinimal | null;
 }
 
-const FIBER_TAG_FUNCTION  = 0;
-const FIBER_TAG_CLASS     = 1;
-const FIBER_TAG_FORWARD   = 11;
-const FIBER_TAG_MEMO      = 14;
+const FIBER_TAG_FUNCTION = 0;
+const FIBER_TAG_CLASS = 1;
+const FIBER_TAG_FORWARD = 11;
+const FIBER_TAG_MEMO = 14;
 const FIBER_TAG_SIMPLEMEMO = 15;
 
 function getComponentName(fiber: FiberMinimal): string {
@@ -183,8 +185,11 @@ function wrapFunctionComponentDispatchers(fiber: FiberMinimal): void {
           // Detect hook type: useState queues have a lastRenderedReducer that is the
           // basicStateReducer identity function; useReducer queues have a custom reducer.
           const hookType: 'state' | 'reducer' =
-            typeof (queue as { lastRenderedReducer?: unknown }).lastRenderedReducer === 'function' &&
-            (queue as { lastRenderedReducer?: Function }).lastRenderedReducer?.toString().includes('action')
+            typeof (queue as { lastRenderedReducer?: unknown }).lastRenderedReducer ===
+              'function' &&
+            (queue as { lastRenderedReducer?: Function }).lastRenderedReducer
+              ?.toString()
+              .includes('action')
               ? 'reducer'
               : 'state';
 
@@ -249,7 +254,9 @@ function wrapClassComponentInstance(fiber: FiberMinimal): void {
           action: serializeValue(updater, 2),
           batchId: nextBatchId(),
         });
-      } catch { /* never break */ }
+      } catch {
+        /* never break */
+      }
       return origSetState.call(this, updater, callback);
     };
   }
@@ -270,7 +277,9 @@ function wrapClassComponentInstance(fiber: FiberMinimal): void {
           action: null,
           batchId: nextBatchId(),
         });
-      } catch { /* never break */ }
+      } catch {
+        /* never break */
+      }
       return origForceUpdate.call(this, callback);
     };
   }
@@ -331,8 +340,12 @@ function walkAndWrap(rootFiber: FiberMinimal | null): void {
     const fiber = stack.pop()!;
     try {
       const tag = fiber.tag;
-      if (tag === FIBER_TAG_FUNCTION || tag === FIBER_TAG_FORWARD ||
-          tag === FIBER_TAG_MEMO || tag === FIBER_TAG_SIMPLEMEMO) {
+      if (
+        tag === FIBER_TAG_FUNCTION ||
+        tag === FIBER_TAG_FORWARD ||
+        tag === FIBER_TAG_MEMO ||
+        tag === FIBER_TAG_SIMPLEMEMO
+      ) {
         wrapFunctionComponentDispatchers(fiber);
       } else if (tag === FIBER_TAG_CLASS) {
         wrapClassComponentInstance(fiber);

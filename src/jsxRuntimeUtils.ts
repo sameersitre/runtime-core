@@ -74,8 +74,7 @@ export interface JsxSourceArg {
 export function normalizeJsxSourcePath(fileName: string): string {
   let p = fileName;
   if (p.startsWith('file://')) p = p.slice('file://'.length);
-  if (p.startsWith('webpack-internal:///./'))
-    p = p.slice('webpack-internal:///./'.length);
+  if (p.startsWith('webpack-internal:///./')) p = p.slice('webpack-internal:///./'.length);
   // Next.js Turbopack emits `[project]/path/to/Foo.tsx` for project-relative
   // paths. Strip the prefix so the result is a plain project-relative path
   // matching what other bundlers produce — click-to-IDE in the desktop can
@@ -131,9 +130,9 @@ export function computeCallSiteId(source: JsxSourceArg): string {
  * Generic over the fiber-like shape — works for both the full `Fiber` type
  * in `fiberTreeWalker.ts` and the minimal subset used by `cascadeAnalyzer.ts`.
  */
-export function readJsxSourceFromFiber(
-  fiber: { memoizedProps: Record<string, unknown> | null },
-): FlotraceJsxSource | undefined {
+export function readJsxSourceFromFiber(fiber: {
+  memoizedProps: Record<string, unknown> | null;
+}): FlotraceJsxSource | undefined {
   const props = fiber.memoizedProps;
   if (!props) return undefined;
   const raw = (props as Record<string | symbol, unknown>)[FLOTRACE_SOURCE];
@@ -173,10 +172,7 @@ const RING_BUFFER_MAX = 60;
  * Record a render timestamp for a call site. Caller may inject `now` for
  * deterministic tests; production callers use the default `performance.now()`.
  */
-export function recordCallSiteRender(
-  callSiteId: string,
-  now: number = performance.now(),
-): void {
+export function recordCallSiteRender(callSiteId: string, now: number = performance.now()): void {
   const arr = callSiteRenders.get(callSiteId);
   if (arr === undefined) {
     callSiteRenders.set(callSiteId, [now]);
@@ -200,7 +196,7 @@ export function getCallSiteRenders(callSiteId: string): readonly number[] {
  */
 export function getCallSiteRenderRate(
   callSiteId: string,
-  windowMs: number = 5000,
+  windowMs = 5000,
   now: number = performance.now(),
 ): number {
   const arr = callSiteRenders.get(callSiteId);
@@ -235,7 +231,7 @@ export function clearCallSiteRenders(): void {
  * The `now` arg lets tests inject deterministic timestamps.
  */
 export function computeCallSiteMetricsPayload(
-  windowMs: number = 5000,
+  windowMs = 5000,
   now: number = performance.now(),
 ): Record<string, number> | null {
   let out: Record<string, number> | null = null;
@@ -289,9 +285,7 @@ export interface DuplicateKeyEvent {
  */
 let duplicateKeyEmitter: ((evt: DuplicateKeyEvent) => void) | null = null;
 
-export function setDuplicateKeyEmitter(
-  emitter: ((evt: DuplicateKeyEvent) => void) | null,
-): void {
+export function setDuplicateKeyEmitter(emitter: ((evt: DuplicateKeyEvent) => void) | null): void {
   duplicateKeyEmitter = emitter;
 }
 
@@ -445,10 +439,7 @@ const REACT_ELEMENT_TYPEOF_R19 = Symbol.for('react.transitional.element');
 
 function isReactElement(v: object): boolean {
   const typeOf = (v as { $$typeof?: unknown }).$$typeof;
-  return (
-    typeOf === REACT_ELEMENT_TYPEOF_LEGACY ||
-    typeOf === REACT_ELEMENT_TYPEOF_R19
-  );
+  return typeOf === REACT_ELEMENT_TYPEOF_LEGACY || typeOf === REACT_ELEMENT_TYPEOF_R19;
 }
 
 /**

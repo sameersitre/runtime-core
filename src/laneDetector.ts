@@ -9,18 +9,18 @@
 import type { LaneInfo, LanePriority } from './types';
 
 // React 18 lane bitmasks (from ReactFiberLane.js)
-const SyncHydrationLane    = 0b0000000000000000000000000000001;
-const SyncLane             = 0b0000000000000000000000000000010;
+const SyncHydrationLane = 0b0000000000000000000000000000001;
+const SyncLane = 0b0000000000000000000000000000010;
 const InputContinuousHydrationLane = 0b0000000000000000000000000000100;
-const InputContinuousLane  = 0b0000000000000000000000000001000;
+const InputContinuousLane = 0b0000000000000000000000000001000;
 const DefaultHydrationLane = 0b0000000000000000000000000010000;
-const DefaultLane          = 0b0000000000000000000000000100000;
-const TransitionLanes      = 0b0000000001111111111111111000000; // lanes 7–22
-const RetryLanes           = 0b0000011110000000000000000000000;
+const DefaultLane = 0b0000000000000000000000000100000;
+const TransitionLanes = 0b0000000001111111111111111000000; // lanes 7–22
+const RetryLanes = 0b0000011110000000000000000000000;
 const SelectiveHydrationLane = 0b0000100000000000000000000000000;
-const IdleHydrationLane    = 0b0001000000000000000000000000000;
-const IdleLane             = 0b0010000000000000000000000000000;
-const OffscreenLane        = 0b0100000000000000000000000000000;
+const IdleHydrationLane = 0b0001000000000000000000000000000;
+const IdleLane = 0b0010000000000000000000000000000;
+const OffscreenLane = 0b0100000000000000000000000000000;
 
 export function classifyLanes(lanes: number): LaneInfo {
   try {
@@ -54,28 +54,44 @@ export function classifyLanes(lanes: number): LaneInfo {
 
 export function lanePriorityLabel(priority: LanePriority): string {
   switch (priority) {
-    case 'sync':       return 'Sync';
-    case 'discrete':   return 'Discrete';
-    case 'continuous': return 'Continuous';
-    case 'default':    return 'Default';
-    case 'transition': return 'Transition';
-    case 'deferred':   return 'Deferred';
-    case 'idle':       return 'Idle';
-    case 'offscreen':  return 'Offscreen';
+    case 'sync':
+      return 'Sync';
+    case 'discrete':
+      return 'Discrete';
+    case 'continuous':
+      return 'Continuous';
+    case 'default':
+      return 'Default';
+    case 'transition':
+      return 'Transition';
+    case 'deferred':
+      return 'Deferred';
+    case 'idle':
+      return 'Idle';
+    case 'offscreen':
+      return 'Offscreen';
   }
 }
 
 /** CSS color for a lane priority — used by LaneBadge */
 export function lanePriorityColor(priority: LanePriority): string {
   switch (priority) {
-    case 'sync':       return '#F44336'; // red
-    case 'discrete':   return '#42A5F5'; // blue
-    case 'continuous': return '#26C6DA'; // cyan
-    case 'default':    return '#78909C'; // blue-gray
-    case 'transition': return '#66BB6A'; // green
-    case 'deferred':   return '#AB47BC'; // purple
-    case 'idle':       return '#546E7A'; // dim
-    case 'offscreen':  return '#455A64'; // very dim
+    case 'sync':
+      return '#F44336'; // red
+    case 'discrete':
+      return '#42A5F5'; // blue
+    case 'continuous':
+      return '#26C6DA'; // cyan
+    case 'default':
+      return '#78909C'; // blue-gray
+    case 'transition':
+      return '#66BB6A'; // green
+    case 'deferred':
+      return '#AB47BC'; // purple
+    case 'idle':
+      return '#546E7A'; // dim
+    case 'offscreen':
+      return '#455A64'; // very dim
   }
 }
 

@@ -9,12 +9,16 @@
 
 // Minimal fiber shape for attribution (avoid importing full Fiber type).
 export interface FiberLike {
-  type: {
-    name?: string;
-    displayName?: string;
-    type?: { name?: string; displayName?: string };
-    render?: { name?: string; displayName?: string };
-  } | ((...args: unknown[]) => unknown) | string | null;
+  type:
+    | {
+        name?: string;
+        displayName?: string;
+        type?: { name?: string; displayName?: string };
+        render?: { name?: string; displayName?: string };
+      }
+    | ((...args: unknown[]) => unknown)
+    | string
+    | null;
   return: FiberLike | null;
   tag: number;
 }
@@ -48,12 +52,14 @@ export function getCurrentRenderingFiber(): FiberLike | null {
 
     // React 18: __SECRET_INTERNALS...ReactCurrentOwner.current
     const secret = win.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED as
-      { ReactCurrentOwner?: { current: FiberLike | null } } | undefined;
+      | { ReactCurrentOwner?: { current: FiberLike | null } }
+      | undefined;
     if (secret?.ReactCurrentOwner?.current) return secret.ReactCurrentOwner.current;
 
     // React 19: renamed + flattened — try known property names
     const client = win.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE as
-      Record<string, unknown> | undefined;
+      | Record<string, unknown>
+      | undefined;
     if (client) {
       // React 19 stores the current owner in a top-level property.
       // Walk all values looking for something that looks like a fiber.
@@ -76,8 +82,11 @@ export function getComponentNameFromFiber(fiber: FiberLike): string | null {
   if (!type) return null;
 
   if (typeof type === 'function') {
-    return (type as { displayName?: string; name?: string }).displayName ||
-      (type as { name?: string }).name || null;
+    return (
+      (type as { displayName?: string; name?: string }).displayName ||
+      (type as { name?: string }).name ||
+      null
+    );
   }
 
   if (typeof type === 'object' && type !== null) {

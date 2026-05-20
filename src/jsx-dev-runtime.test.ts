@@ -47,11 +47,7 @@ import {
   computeCallSiteId,
   type FlotraceJsxSource,
 } from './jsxRuntimeUtils';
-import {
-  jsxDEV,
-  jsxsDEV,
-  Fragment,
-} from './jsx-dev-runtime';
+import { jsxDEV, jsxsDEV, Fragment } from './jsx-dev-runtime';
 
 const SOURCE = { fileName: 'src/Foo.tsx', lineNumber: 10, columnNumber: 5 };
 
@@ -85,8 +81,7 @@ describe('jsx-dev-runtime', () => {
       jsxDEV(MyComponent, props, undefined, false, SOURCE, null);
 
       expect(mockOrigJsxDEV).toHaveBeenCalledTimes(1);
-      const [type, enrichedProps, key, isStatic, source, self] =
-        mockOrigJsxDEV.mock.calls[0];
+      const [type, enrichedProps, key, isStatic, source, self] = mockOrigJsxDEV.mock.calls[0];
       expect(type).toBe(MyComponent);
       expect(key).toBeUndefined();
       expect(isStatic).toBe(false);
@@ -188,9 +183,7 @@ describe('jsx-dev-runtime', () => {
         null,
       );
       // Source symbol not added.
-      expect(
-        (props as Record<string | symbol, unknown>)[FLOTRACE_SOURCE],
-      ).toBeUndefined();
+      expect((props as Record<string | symbol, unknown>)[FLOTRACE_SOURCE]).toBeUndefined();
     });
 
     test('passes through unchanged when props is null', () => {

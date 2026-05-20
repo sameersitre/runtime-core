@@ -29,10 +29,7 @@
  * 5000-callsite app); symbol-keyed source object adds ~200 bytes per
  * user-component fiber (~1 MB for 5000 fibers).
  */
-import {
-  jsxDEV as origJsxDEV,
-  Fragment,
-} from 'react/jsx-dev-runtime';
+import { jsxDEV as origJsxDEV, Fragment } from 'react/jsx-dev-runtime';
 import {
   FLOTRACE_SOURCE,
   computeCallSiteId,
@@ -65,8 +62,7 @@ import {
  * Both `window` AND `document` are checked because some SSR environments
  * polyfill `window` for DOM-fixture purposes but don't ship a real document.
  */
-const IS_BROWSER =
-  typeof window !== 'undefined' && typeof document !== 'undefined';
+const IS_BROWSER = typeof window !== 'undefined' && typeof document !== 'undefined';
 
 /**
  * The wrapper takes the same arguments the compiler would pass to React's
@@ -163,4 +159,3 @@ export { Fragment };
 // module. Matches the export shape of `react/jsx-dev-runtime` so user code
 // type-checks without any additional setup.
 export type { JSX } from 'react/jsx-dev-runtime';
-

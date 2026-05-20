@@ -27,7 +27,7 @@ const MAX_OBJECT_KEYS = 30;
 export function serializeValue(
   value: unknown,
   depth = 0,
-  seen = new WeakSet<object>()
+  seen = new WeakSet<object>(),
 ): SerializedValue {
   // Handle null
   if (value === null) {
@@ -165,11 +165,7 @@ export function serializeValue(
     for (let i = 0; i < Math.min(keys.length, MAX_OBJECT_KEYS); i++) {
       const key = keys[i];
       try {
-        result[key] = serializeValue(
-          (value as Record<string, unknown>)[key],
-          depth + 1,
-          seen
-        );
+        result[key] = serializeValue((value as Record<string, unknown>)[key], depth + 1, seen);
       } catch {
         result[key] = { __type: 'truncated', originalType: 'error' };
       }
@@ -193,9 +189,7 @@ export function serializeValue(
 /**
  * Serialize props object, filtering out React internals and children
  */
-export function serializeProps(
-  props: Record<string, unknown>
-): Record<string, SerializedValue> {
+export function serializeProps(props: Record<string, unknown>): Record<string, SerializedValue> {
   const result: Record<string, SerializedValue> = {};
 
   for (const [key, value] of Object.entries(props)) {
@@ -225,7 +219,7 @@ export function serializeProps(
  */
 export function getChangedKeys(
   prev: Record<string, unknown> | undefined,
-  next: Record<string, unknown>
+  next: Record<string, unknown>,
 ): string[] {
   if (!prev) {
     return Object.keys(next);

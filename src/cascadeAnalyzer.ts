@@ -22,17 +22,23 @@ import { classifyLanes, getFinishedLanes } from './laneDetector';
 import { getFiberDisplayName } from './fiberUtils';
 
 // React fiber flags — from ReactFiberFlags.js (React 18)
-const PerformedWork   = 0b0000000000000000000000000000001;
+const PerformedWork = 0b0000000000000000000000000000001;
 const ForceUpdateFlag = 0b0000000000000000000000100000000; // React 18 bit
 
 // React fiber tags
-const FunctionComponent  = 0;
-const ClassComponent     = 1;
-const ForwardRef         = 11;
-const MemoComponent      = 14;
+const FunctionComponent = 0;
+const ClassComponent = 1;
+const ForwardRef = 11;
+const MemoComponent = 14;
 const SimpleMemoComponent = 15;
 
-const USER_TAGS = new Set([FunctionComponent, ClassComponent, ForwardRef, MemoComponent, SimpleMemoComponent]);
+const USER_TAGS = new Set([
+  FunctionComponent,
+  ClassComponent,
+  ForwardRef,
+  MemoComponent,
+  SimpleMemoComponent,
+]);
 
 // ============================================================================
 // Minimal fiber type (same surface as fiberTreeWalker.Fiber)
@@ -77,7 +83,10 @@ function isMemoizedFiber(fiber: Fiber): boolean {
  * Shallow prop comparison, ignoring `children` (always changes structurally).
  * Returns true when props differ, false when shallowly equal.
  */
-function propsChanged(prev: Record<string, unknown> | null, next: Record<string, unknown> | null): boolean {
+function propsChanged(
+  prev: Record<string, unknown> | null,
+  next: Record<string, unknown> | null,
+): boolean {
   if (prev === next) return false;
   if (!prev || !next) return true;
   const prevKeys = Object.keys(prev);
@@ -90,7 +99,10 @@ function propsChanged(prev: Record<string, unknown> | null, next: Record<string,
   return false;
 }
 
-function getChangedPropKeys(prev: Record<string, unknown> | null, next: Record<string, unknown> | null): string[] {
+function getChangedPropKeys(
+  prev: Record<string, unknown> | null,
+  next: Record<string, unknown> | null,
+): string[] {
   if (!prev || !next) return [];
   const changed: string[] = [];
   const allKeys = new Set([...Object.keys(prev), ...Object.keys(next)]);
@@ -198,7 +210,12 @@ interface StackEntry {
 function buildCascadeTree(
   rootFiber: Fiber,
   triggers: readonly TriggerRecord[],
-): { rootCauses: CascadeNode[]; totalComponents: number; avoidableCount: number; avoidableDuration: number } {
+): {
+  rootCauses: CascadeNode[];
+  totalComponents: number;
+  avoidableCount: number;
+  avoidableDuration: number;
+} {
   const rootCauses: CascadeNode[] = [];
   let totalComponents = 0;
   let avoidableCount = 0;
@@ -213,13 +230,15 @@ function buildCascadeTree(
     }
   }
 
-  const stack: StackEntry[] = [{
-    fiber: rootFiber,
-    depth: 0,
-    parentRerendered: false,
-    parentNode: null,
-    isRoot: true,
-  }];
+  const stack: StackEntry[] = [
+    {
+      fiber: rootFiber,
+      depth: 0,
+      parentRerendered: false,
+      parentNode: null,
+      isRoot: true,
+    },
+  ];
 
   while (stack.length > 0) {
     const entry = stack.pop()!;
@@ -236,7 +255,13 @@ function buildCascadeTree(
       // Push children as non-re-render context
       let child = fiber.child;
       while (child) {
-        stack.push({ fiber: child, depth: depth + 1, parentRerendered: false, parentNode, isRoot: false });
+        stack.push({
+          fiber: child,
+          depth: depth + 1,
+          parentRerendered: false,
+          parentNode,
+          isRoot: false,
+        });
         child = child.sibling;
       }
       continue;
@@ -246,7 +271,13 @@ function buildCascadeTree(
       // Non-user tag (host, fragment, etc.) — just traverse children
       let child = fiber.child;
       while (child) {
-        stack.push({ fiber: child, depth: depth + 1, parentRerendered: didRender || parentRerendered, parentNode, isRoot: false });
+        stack.push({
+          fiber: child,
+          depth: depth + 1,
+          parentRerendered: didRender || parentRerendered,
+          parentNode,
+          isRoot: false,
+        });
         child = child.sibling;
       }
       continue;
@@ -258,7 +289,13 @@ function buildCascadeTree(
       // Not part of this commit's cascade
       let child = fiber.child;
       while (child) {
-        stack.push({ fiber: child, depth: depth + 1, parentRerendered: false, parentNode, isRoot: false });
+        stack.push({
+          fiber: child,
+          depth: depth + 1,
+          parentRerendered: false,
+          parentNode,
+          isRoot: false,
+        });
         child = child.sibling;
       }
       continue;
@@ -280,7 +317,7 @@ function buildCascadeTree(
     }
 
     const node: CascadeNode = {
-      nodeId: componentName + '-' + depth + '-' + (totalComponents),
+      nodeId: componentName + '-' + depth + '-' + totalComponents,
       componentName,
       reason,
       renderDuration,
@@ -306,7 +343,12 @@ function buildCascadeTree(
     if (parentNode) {
       parentNode.children.push(node);
       // Propagate subtree duration upward (simplified — full propagation done in post-process)
-    } else if (reason === 'state-update' || reason === 'context-update' || reason === 'force-update' || isRoot) {
+    } else if (
+      reason === 'state-update' ||
+      reason === 'context-update' ||
+      reason === 'force-update' ||
+      isRoot
+    ) {
       rootCauses.push(node);
     } else if (parentRerendered) {
       // Orphan cascade node — attach to a synthetic root if needed
@@ -348,8 +390,10 @@ export function analyzeCascade(
     const finishedLanes = getFinishedLanes(root);
     const lane = classifyLanes(finishedLanes);
 
-    const { rootCauses, totalComponents, avoidableCount, avoidableDuration } =
-      buildCascadeTree(root.current, triggers);
+    const { rootCauses, totalComponents, avoidableCount, avoidableDuration } = buildCascadeTree(
+      root.current,
+      triggers,
+    );
 
     // Skip trivial commits (mount-only, no re-renders)
     if (totalComponents === 0) return null;

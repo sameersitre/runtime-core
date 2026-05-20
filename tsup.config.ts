@@ -15,11 +15,6 @@ export default defineConfig({
   clean: true,
   external: ['react', 'react-dom'],
   esbuildOptions(options) {
-    options.external = [
-      'react',
-      'react-dom',
-      'react/jsx-runtime',
-      'react/jsx-dev-runtime',
-    ];
+    options.external = ['react', 'react-dom', 'react/jsx-runtime', 'react/jsx-dev-runtime'];
   },
 });

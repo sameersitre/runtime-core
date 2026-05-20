@@ -57,12 +57,9 @@ describe('jsxRuntimeUtils', () => {
   });
 
   describe('normalizeJsxSourcePath', () => {
-    test.each(BUNDLER_PATH_STYLES)(
-      'normalizes $label → canonical form',
-      ({ raw, normalized }) => {
-        expect(normalizeJsxSourcePath(raw)).toBe(normalized);
-      },
-    );
+    test.each(BUNDLER_PATH_STYLES)('normalizes $label → canonical form', ({ raw, normalized }) => {
+      expect(normalizeJsxSourcePath(raw)).toBe(normalized);
+    });
 
     test('is idempotent — calling twice produces the same result', () => {
       for (const { raw } of BUNDLER_PATH_STYLES) {
@@ -487,9 +484,7 @@ describe('jsxRuntimeUtils', () => {
       recordJsxKey(SOURCE_A, '42');
       await Promise.resolve();
       expect(emitter).toHaveBeenCalledTimes(1);
-      expect(emitter).toHaveBeenCalledWith(
-        expect.objectContaining({ occurrences: 2 }),
-      );
+      expect(emitter).toHaveBeenCalledWith(expect.objectContaining({ occurrences: 2 }));
     });
 
     test('coerces number + string keys to the same comparison value (matches React semantics)', async () => {
@@ -592,9 +587,7 @@ describe('jsxRuntimeUtils', () => {
       await Promise.resolve();
 
       expect(emitter).toHaveBeenCalledTimes(1);
-      expect(emitter).toHaveBeenCalledWith(
-        expect.objectContaining({ occurrences: 5 }),
-      );
+      expect(emitter).toHaveBeenCalledWith(expect.objectContaining({ occurrences: 5 }));
     });
 
     test('silently drops events when no emitter is registered', async () => {

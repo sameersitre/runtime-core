@@ -6,7 +6,7 @@
  * React Compiler introduces a per-component memo cache stored as an array
  * in the first memoizedState slot, seeded with Symbol.for('react.memo_cache_sentinel').
  */
-import type { CompilerStatus } from "./types";
+import type { CompilerStatus } from './types';
 
 /** Sentinel value React Compiler uses to mark un-cached slots */
 const MEMO_CACHE_SENTINEL = Symbol.for('react.memo_cache_sentinel');

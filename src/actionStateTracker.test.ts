@@ -63,28 +63,18 @@ describe('actionStateTracker', () => {
       // "no message emitted" — undefined types, null types, no action hooks.
       const client = createStubClient();
       scanActionStateChanges(
-        new Map([
-          [
-            'App/Undef-1',
-            createSyntheticFiber(undefined, [createActionState(0, false)]),
-          ],
-        ]),
+        new Map([['App/Undef-1', createSyntheticFiber(undefined, [createActionState(0, false)])]]),
         client,
       );
       scanActionStateChanges(
-        new Map([
-          ['App/Null-1', createSyntheticFiber(null, [createActionState(0, false)])],
-        ]),
+        new Map([['App/Null-1', createSyntheticFiber(null, [createActionState(0, false)])]]),
         client,
       );
       scanActionStateChanges(
         new Map([
           [
             'App/NoAction-1',
-            createSyntheticFiber(
-              ['useState', 'useEffect', 'useMemo'],
-              [42, undefined, 'cached'],
-            ),
+            createSyntheticFiber(['useState', 'useEffect', 'useMemo'], [42, undefined, 'cached']),
           ],
         ]),
         client,
@@ -146,10 +136,7 @@ describe('actionStateTracker', () => {
     test('skips a useActionState whose memoizedState is not an array of length >= 3', () => {
       // Behaviour-grouped: both non-array shape and short-array shape fail the
       // same length+isArray guard — collapse to a single test.
-      const objectShape = createSyntheticFiber(
-        ['useActionState'],
-        [{ pending: true, data: null }],
-      );
+      const objectShape = createSyntheticFiber(['useActionState'], [{ pending: true, data: null }]);
       const shortArrayShape = createSyntheticFiber(['useActionState'], [['state', () => {}]]);
 
       const client = createStubClient();
@@ -172,10 +159,7 @@ describe('actionStateTracker', () => {
   describe('useOptimistic hook extraction', () => {
     test('emits an entry with isPending=false (optimistic values are immediate)', () => {
       const client = createStubClient();
-      const fiber = createSyntheticFiber(
-        ['useOptimistic'],
-        [createOptimisticState('predicted')],
-      );
+      const fiber = createSyntheticFiber(['useOptimistic'], [createOptimisticState('predicted')]);
       scanActionStateChanges(new Map([['App/Foo-1', fiber]]), client);
       expect(client.sent).toHaveLength(1);
       expect(asMessage(client.sent[0]).actions[0]).toMatchObject({
@@ -231,10 +215,7 @@ describe('actionStateTracker', () => {
   describe('change detection / deduplication', () => {
     test('does not re-emit when state is unchanged across calls', () => {
       const client = createStubClient();
-      const fiber = createSyntheticFiber(
-        ['useActionState'],
-        [createActionState('same', false)],
-      );
+      const fiber = createSyntheticFiber(['useActionState'], [createActionState('same', false)]);
       scanActionStateChanges(new Map([['App/Foo-1', fiber]]), client);
       scanActionStateChanges(new Map([['App/Foo-1', fiber]]), client);
       scanActionStateChanges(new Map([['App/Foo-1', fiber]]), client);
@@ -247,22 +228,13 @@ describe('actionStateTracker', () => {
       // same code path.
       const client = createStubClient();
       const before = createSyntheticFiber(['useActionState'], [createActionState('s', false)]);
-      const afterPending = createSyntheticFiber(
-        ['useActionState'],
-        [createActionState('s', true)],
-      );
+      const afterPending = createSyntheticFiber(['useActionState'], [createActionState('s', true)]);
       scanActionStateChanges(new Map([['App/Pending-1', before]]), client);
       scanActionStateChanges(new Map([['App/Pending-1', afterPending]]), client);
       expect(asMessage(client.sent[1]).actions[0].isPending).toBe(true);
 
-      const v1 = createSyntheticFiber(
-        ['useActionState'],
-        [createActionState({ count: 1 }, false)],
-      );
-      const v2 = createSyntheticFiber(
-        ['useActionState'],
-        [createActionState({ count: 2 }, false)],
-      );
+      const v1 = createSyntheticFiber(['useActionState'], [createActionState({ count: 1 }, false)]);
+      const v2 = createSyntheticFiber(['useActionState'], [createActionState({ count: 2 }, false)]);
       scanActionStateChanges(new Map([['App/Value-1', v1]]), client);
       scanActionStateChanges(new Map([['App/Value-1', v2]]), client);
       expect(client.sent).toHaveLength(4); // 2 from pending block + 2 from value block
@@ -280,18 +252,12 @@ describe('actionStateTracker', () => {
         client,
       );
       expect(client.sent).toHaveLength(2);
-      expect(client.sent.map((m) => asMessage(m).nodeId).sort()).toEqual([
-        'App/A-1',
-        'App/B-1',
-      ]);
+      expect(client.sent.map((m) => asMessage(m).nodeId).sort()).toEqual(['App/A-1', 'App/B-1']);
     });
 
     test('clearActionStateCache forces the next identical scan to re-emit', () => {
       const client = createStubClient();
-      const fiber = createSyntheticFiber(
-        ['useActionState'],
-        [createActionState('s', false)],
-      );
+      const fiber = createSyntheticFiber(['useActionState'], [createActionState('s', false)]);
       scanActionStateChanges(new Map([['App/Foo-1', fiber]]), client);
       expect(client.sent).toHaveLength(1);
 
@@ -310,10 +276,7 @@ describe('actionStateTracker', () => {
       ['App/NoTrailingDigits', 'NoTrailingDigits'],
     ])('nodeId=%s → componentName=%s', (nodeId, expectedName) => {
       const client = createStubClient();
-      const fiber = createSyntheticFiber(
-        ['useActionState'],
-        [createActionState('x', false)],
-      );
+      const fiber = createSyntheticFiber(['useActionState'], [createActionState('x', false)]);
       scanActionStateChanges(new Map([[nodeId, fiber]]), client);
       expect(asMessage(client.sent[0]).componentName).toBe(expectedName);
     });
@@ -322,10 +285,7 @@ describe('actionStateTracker', () => {
       // 'App/Foo/' → split → ['App','Foo',''] → pop → '' → replace → ''
       // Empty string is the actual extracted name (?? fallback only triggers on null/undefined).
       const client = createStubClient();
-      const fiber = createSyntheticFiber(
-        ['useActionState'],
-        [createActionState('x', false)],
-      );
+      const fiber = createSyntheticFiber(['useActionState'], [createActionState('x', false)]);
       scanActionStateChanges(new Map([['App/Foo/', fiber]]), client);
       expect(asMessage(client.sent[0]).componentName).toBe('');
     });
@@ -356,10 +316,7 @@ describe('actionStateTracker', () => {
       // so a throw aborts the whole batch. Tests both orderings:
       //  - corrupt-first → emits 0 (ok-fiber after never reached)
       //  - ok-first      → emits 1 (corrupt aborts only what's after it)
-      const ok = createSyntheticFiber(
-        ['useActionState'],
-        [createActionState('x', false)],
-      );
+      const ok = createSyntheticFiber(['useActionState'], [createActionState('x', false)]);
 
       const corruptFirst = createStubClient();
       scanActionStateChanges(
@@ -404,10 +361,7 @@ describe('actionStateTracker', () => {
       const sendSpy = vi.spyOn(client, 'send');
       const sendImmediateSpy = vi.spyOn(client, 'sendImmediate');
 
-      const fiber = createSyntheticFiber(
-        ['useActionState'],
-        [createActionState('x', false)],
-      );
+      const fiber = createSyntheticFiber(['useActionState'], [createActionState('x', false)]);
       scanActionStateChanges(new Map([['App/Foo-1', fiber]]), client);
 
       expect(sendSpy).toHaveBeenCalledTimes(1);

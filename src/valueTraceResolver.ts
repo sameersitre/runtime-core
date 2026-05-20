@@ -191,7 +191,14 @@ function findMatchingPathInObject(
       const child = container[i];
       const directMatch = valuesMatch(target, targetFp, child, cache);
       if (directMatch) return { path: [...currentPath, String(i)], confidence: directMatch };
-      const nested = findMatchingPathInObject(target, targetFp, child, [...currentPath, String(i)], depth + 1, cache);
+      const nested = findMatchingPathInObject(
+        target,
+        targetFp,
+        child,
+        [...currentPath, String(i)],
+        depth + 1,
+        cache,
+      );
       if (nested) return nested;
     }
   } else {
@@ -199,7 +206,14 @@ function findMatchingPathInObject(
       const child = (container as Record<string, unknown>)[key];
       const directMatch = valuesMatch(target, targetFp, child, cache);
       if (directMatch) return { path: [...currentPath, key], confidence: directMatch };
-      const nested = findMatchingPathInObject(target, targetFp, child, [...currentPath, key], depth + 1, cache);
+      const nested = findMatchingPathInObject(
+        target,
+        targetFp,
+        child,
+        [...currentPath, key],
+        depth + 1,
+        cache,
+      );
       if (nested) return nested;
     }
   }
@@ -377,9 +391,10 @@ export function resolveValueTrace(input: ValueTraceInput): Omit<ValueTrace, 'req
     rootValue = walkPath(fiber.memoizedProps, input.propPath);
   } else if (input.hookPath) {
     const hookValue = getHookValueAt(fiber, input.hookPath.hookIndex);
-    rootValue = input.hookPath.subPath && input.hookPath.subPath.length > 0
-      ? walkPath(hookValue, input.hookPath.subPath)
-      : hookValue;
+    rootValue =
+      input.hookPath.subPath && input.hookPath.subPath.length > 0
+        ? walkPath(hookValue, input.hookPath.subPath)
+        : hookValue;
   } else {
     return { ...base, error: 'value-not-found', resolvedAtMs: now() };
   }
@@ -467,7 +482,8 @@ export function resolveValueTrace(input: ValueTraceInput): Omit<ValueTrace, 'req
                 kind: 'prop',
                 nodeId: ancestorNodeId,
                 componentName: ancestorName,
-                propPath: trailingSubPath.length > 0 ? [...matchPath, ...trailingSubPath] : matchPath,
+                propPath:
+                  trailingSubPath.length > 0 ? [...matchPath, ...trailingSubPath] : matchPath,
                 confidence: matchConfidence,
                 // P6: attribute the parent JSX call site that drilled this
                 // prop. When the user opted into the JSX runtime AND this
@@ -545,7 +561,11 @@ export function resolveValueTrace(input: ValueTraceInput): Omit<ValueTrace, 'req
   const contextMatch = findContextMatch(fiber, rootValue, rootFp, fiberToNodeId, fpCache);
   if (contextMatch) {
     steps.push(contextMatch.step);
-    const providerStoreMatch = findStoreMatch(contextMatch.providerValue, cachedFp(contextMatch.providerValue, fpCache), fpCache);
+    const providerStoreMatch = findStoreMatch(
+      contextMatch.providerValue,
+      cachedFp(contextMatch.providerValue, fpCache),
+      fpCache,
+    );
     if (providerStoreMatch) {
       steps.push({
         kind: 'store',
@@ -710,7 +730,11 @@ function findMatchingHookState(
   target: unknown,
   targetFp: string,
   cache: FpCache,
-): { hookIndex: number; hookType: 'useState' | 'unknown'; confidence: 'exact' | 'fingerprint-match' } | null {
+): {
+  hookIndex: number;
+  hookType: 'useState' | 'unknown';
+  confidence: 'exact' | 'fingerprint-match';
+} | null {
   let hook: FiberHookState | null = fiber.memoizedState;
   let index = 0;
   while (hook) {
@@ -719,10 +743,16 @@ function findMatchingHookState(
     const isMemoTuple = Array.isArray(ms) && ms.length === 2 && Array.isArray(ms[1]);
     // Skip useEffect/useLayoutEffect ({ tag, create, destroy, deps, next }).
     const isEffectShape =
-      ms !== null && typeof ms === 'object' && 'create' in (ms as object) && 'deps' in (ms as object);
+      ms !== null &&
+      typeof ms === 'object' &&
+      'create' in (ms as object) &&
+      'deps' in (ms as object);
     // Skip useRef ({ current }) — refs don't drive prop flow.
     const isRefShape =
-      ms !== null && typeof ms === 'object' && Object.keys(ms as object).length === 1 && 'current' in (ms as object);
+      ms !== null &&
+      typeof ms === 'object' &&
+      Object.keys(ms as object).length === 1 &&
+      'current' in (ms as object);
 
     if (!isMemoTuple && !isEffectShape && !isRefShape) {
       const match = valuesMatch(target, targetFp, ms, cache);

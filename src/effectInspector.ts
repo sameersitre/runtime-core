@@ -18,7 +18,13 @@
 import type { Fiber, FiberEffect, FiberHookState } from './fiberTreeWalker';
 import type { EffectInfo, SerializedValue } from './types';
 import { serializeValue } from './serializer';
-import { HOOK_HAS_EFFECT, HOOK_INSERTION, HOOK_LAYOUT, HOOK_PASSIVE, collectCircularList } from './fiberConstants';
+import {
+  HOOK_HAS_EFFECT,
+  HOOK_INSERTION,
+  HOOK_LAYOUT,
+  HOOK_PASSIVE,
+  collectCircularList,
+} from './fiberConstants';
 
 /**
  * Inspect all effects in a fiber's updateQueue.
@@ -43,9 +49,13 @@ export function inspectEffects(fiber: Fiber): EffectInfo[] {
       const prev = prevEffects[i] ?? null;
 
       const type: EffectInfo['type'] =
-        (curr.tag & HOOK_PASSIVE) !== 0 ? 'useEffect' :
-        (curr.tag & HOOK_LAYOUT) !== 0 ? 'useLayoutEffect' :
-        (curr.tag & HOOK_INSERTION) !== 0 ? 'useInsertionEffect' : 'useEffect';
+        (curr.tag & HOOK_PASSIVE) !== 0
+          ? 'useEffect'
+          : (curr.tag & HOOK_LAYOUT) !== 0
+            ? 'useLayoutEffect'
+            : (curr.tag & HOOK_INSERTION) !== 0
+              ? 'useInsertionEffect'
+              : 'useEffect';
 
       const willRun = (curr.tag & HOOK_HAS_EFFECT) !== 0;
       const changedDepIndices = diffDeps(prev?.deps ?? null, curr.deps);

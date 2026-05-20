@@ -8,7 +8,7 @@
  * Events are batched and flushed every 500ms to avoid flooding the WebSocket.
  */
 
-import type { TimelineEvent, TimelineEventType, SerializedValue } from './types';
+import type { TimelineEvent, TimelineEventType } from './types';
 import { serializeValue } from './serializer';
 import type { FloTraceWebSocketClient } from './websocketClient';
 

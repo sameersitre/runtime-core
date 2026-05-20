@@ -61,7 +61,9 @@ export class FloTraceWebSocketClient {
       // LAN auth token rides in the query string — WebSocket browser API can't set custom
       // request headers, and RN's fetch-polyfilled WebSocket is inconsistent about them too.
       // The desktop server accepts either `?token=` or the `Sec-WebSocket-Protocol` header.
-      const tokenParam = this.config.authToken ? `?token=${encodeURIComponent(this.config.authToken)}` : '';
+      const tokenParam = this.config.authToken
+        ? `?token=${encodeURIComponent(this.config.authToken)}`
+        : '';
       const url = `ws://${host}:${this.config.port}${tokenParam}`;
       console.log(`[FloTrace] Connecting to ${url.replace(/token=[^&]+/, 'token=***')}...`);
 
@@ -236,7 +238,7 @@ export class FloTraceWebSocketClient {
     if (this.reconnectAttempts >= FloTraceWebSocketClient.MAX_RECONNECT_ATTEMPTS) {
       console.warn(
         `[FloTrace] Reconnection budget exhausted (${FloTraceWebSocketClient.MAX_RECONNECT_ATTEMPTS} attempts). ` +
-        'Reload the page or restart the extension to retry.',
+          'Reload the page or restart the extension to retry.',
       );
       return;
     }

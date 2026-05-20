@@ -108,9 +108,8 @@ describe('jsxDEV — server-side bail-out (no window/document)', () => {
 
   test('does NOT mark adoption sentinel on the server (browser-only signal)', async () => {
     const { jsxDEV } = await import('./jsx-dev-runtime');
-    const { isJsxRuntimeActive, __resetJsxRuntimeAdoptionForTesting } = await import(
-      './jsxRuntimeUtils'
-    );
+    const { isJsxRuntimeActive, __resetJsxRuntimeAdoptionForTesting } =
+      await import('./jsxRuntimeUtils');
     __resetJsxRuntimeAdoptionForTesting();
     expect(isJsxRuntimeActive()).toBe(false);
 
@@ -131,13 +130,6 @@ describe('jsxDEV — server-side bail-out (no window/document)', () => {
     // Even though we skip enrichment, the underlying React jsxDEV MUST
     // still be called so SSR works correctly — we're a passthrough on
     // the server, not a no-op.
-    expect(mockOrigJsxDEV).toHaveBeenCalledWith(
-      MyComponent,
-      { x: 1 },
-      'k',
-      true,
-      SOURCE,
-      null,
-    );
+    expect(mockOrigJsxDEV).toHaveBeenCalledWith(MyComponent, { x: 1 }, 'k', true, SOURCE, null);
   });
 });

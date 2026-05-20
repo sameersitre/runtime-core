@@ -13,9 +13,11 @@
 export function getFiberDisplayName(type: unknown): string {
   if (!type) return 'Unknown';
   if (typeof type === 'function') {
-    return (type as { displayName?: string; name?: string }).displayName
-      || (type as { name?: string }).name
-      || 'Anonymous';
+    return (
+      (type as { displayName?: string; name?: string }).displayName ||
+      (type as { name?: string }).name ||
+      'Anonymous'
+    );
   }
   if (typeof type === 'object') {
     const t = type as {
@@ -24,7 +26,9 @@ export function getFiberDisplayName(type: unknown): string {
       displayName?: string;
       name?: string;
     };
-    return t.type?.displayName || t.type?.name || t.render?.name || t.displayName || t.name || 'Unknown';
+    return (
+      t.type?.displayName || t.type?.name || t.render?.name || t.displayName || t.name || 'Unknown'
+    );
   }
   return 'Unknown';
 }

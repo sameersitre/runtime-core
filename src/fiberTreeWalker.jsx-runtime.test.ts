@@ -72,9 +72,18 @@ describe('fiberTreeWalker — JSX runtime integration', () => {
     test.each([
       ['missing fileName', { lineNumber: 1, columnNumber: 1, callSiteId: 'a' }],
       ['fileName not a string', { fileName: 123, lineNumber: 1, columnNumber: 1, callSiteId: 'a' }],
-      ['lineNumber not a number', { fileName: 'x', lineNumber: '1', columnNumber: 1, callSiteId: 'a' }],
-      ['columnNumber not a number', { fileName: 'x', lineNumber: 1, columnNumber: '1', callSiteId: 'a' }],
-      ['callSiteId not a string', { fileName: 'x', lineNumber: 1, columnNumber: 1, callSiteId: 123 }],
+      [
+        'lineNumber not a number',
+        { fileName: 'x', lineNumber: '1', columnNumber: 1, callSiteId: 'a' },
+      ],
+      [
+        'columnNumber not a number',
+        { fileName: 'x', lineNumber: 1, columnNumber: '1', callSiteId: 'a' },
+      ],
+      [
+        'callSiteId not a string',
+        { fileName: 'x', lineNumber: 1, columnNumber: 1, callSiteId: 123 },
+      ],
     ])('rejects malformed shape: %s', (_label, malformed) => {
       // Defensive: a Symbol.for('flotrace.source') collision from unrelated
       // tooling must not produce phantom node attribution.

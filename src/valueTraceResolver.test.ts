@@ -33,7 +33,8 @@ vi.mock('./reduxTracker', async () => {
 });
 
 vi.mock('./tanstackQueryTracker', async () => {
-  const actual = await vi.importActual<typeof import('./tanstackQueryTracker')>('./tanstackQueryTracker');
+  const actual =
+    await vi.importActual<typeof import('./tanstackQueryTracker')>('./tanstackQueryTracker');
   return { ...actual, getTanstackSnapshot: () => mockTanstackSnapshot };
 });
 
@@ -111,9 +112,21 @@ describe('resolveValueTrace', () => {
     expect(trace.error).toBeUndefined();
     // Consumer + 2 ancestors.
     expect(trace.steps.length).toBe(3);
-    expect(trace.steps[0]).toMatchObject({ kind: 'prop', componentName: 'Profile', confidence: 'exact' });
-    expect(trace.steps[1]).toMatchObject({ kind: 'prop', componentName: 'Layout', confidence: 'exact' });
-    expect(trace.steps[2]).toMatchObject({ kind: 'prop', componentName: 'App', confidence: 'exact' });
+    expect(trace.steps[0]).toMatchObject({
+      kind: 'prop',
+      componentName: 'Profile',
+      confidence: 'exact',
+    });
+    expect(trace.steps[1]).toMatchObject({
+      kind: 'prop',
+      componentName: 'Layout',
+      confidence: 'exact',
+    });
+    expect(trace.steps[2]).toMatchObject({
+      kind: 'prop',
+      componentName: 'App',
+      confidence: 'exact',
+    });
   });
 
   // Case 2 — Prop → Zustand store → API.
@@ -577,18 +590,33 @@ describe('resolveValueTrace', () => {
       const grandparent = makeFiberWithJsxSource({
         name: 'App',
         props: { user },
-        jsxSource: { fileName: 'src/index.tsx', lineNumber: 5, columnNumber: 1, callSiteId: 'gggggggg' },
+        jsxSource: {
+          fileName: 'src/index.tsx',
+          lineNumber: 5,
+          columnNumber: 1,
+          callSiteId: 'gggggggg',
+        },
       });
       const parent = makeFiberWithJsxSource({
         name: 'Layout',
         props: { user },
-        jsxSource: { fileName: 'src/App.tsx', lineNumber: 20, columnNumber: 3, callSiteId: 'pppppppp' },
+        jsxSource: {
+          fileName: 'src/App.tsx',
+          lineNumber: 20,
+          columnNumber: 3,
+          callSiteId: 'pppppppp',
+        },
         parent: grandparent,
       });
       const child = makeFiberWithJsxSource({
         name: 'Profile',
         props: { user },
-        jsxSource: { fileName: 'src/Layout.tsx', lineNumber: 42, columnNumber: 8, callSiteId: 'cccccccc' },
+        jsxSource: {
+          fileName: 'src/Layout.tsx',
+          lineNumber: 42,
+          columnNumber: 8,
+          callSiteId: 'cccccccc',
+        },
         parent,
       });
       mockFiberRefMap.set('App', grandparent);
@@ -598,11 +626,20 @@ describe('resolveValueTrace', () => {
       const trace = resolveValueTrace({ nodeId: 'App/Layout/Profile', propPath: ['user'] });
       expect(trace.steps.length).toBe(3);
       // Consumer step → Profile's own jsxSource (= where Layout rendered <Profile>).
-      expect((trace.steps[0] as { callSiteOfParentJsx?: { callSiteId: string } }).callSiteOfParentJsx?.callSiteId).toBe('cccccccc');
+      expect(
+        (trace.steps[0] as { callSiteOfParentJsx?: { callSiteId: string } }).callSiteOfParentJsx
+          ?.callSiteId,
+      ).toBe('cccccccc');
       // Ancestor step 1 → Layout's jsxSource (= where App rendered <Layout>).
-      expect((trace.steps[1] as { callSiteOfParentJsx?: { callSiteId: string } }).callSiteOfParentJsx?.callSiteId).toBe('pppppppp');
+      expect(
+        (trace.steps[1] as { callSiteOfParentJsx?: { callSiteId: string } }).callSiteOfParentJsx
+          ?.callSiteId,
+      ).toBe('pppppppp');
       // Ancestor step 2 → App's jsxSource.
-      expect((trace.steps[2] as { callSiteOfParentJsx?: { callSiteId: string } }).callSiteOfParentJsx?.callSiteId).toBe('gggggggg');
+      expect(
+        (trace.steps[2] as { callSiteOfParentJsx?: { callSiteId: string } }).callSiteOfParentJsx
+          ?.callSiteId,
+      ).toBe('gggggggg');
     });
 
     it('leaves callSiteOfParentJsx undefined when the fiber has no JSX symbol (non-opted-in user)', () => {

@@ -20,7 +20,9 @@ import type { FloTraceWebSocketClient } from './websocketClient';
 
 /** Minimal Zustand store interface — only what we need to subscribe */
 export interface ZustandStoreApi {
-  subscribe: (listener: (state: Record<string, unknown>, prevState: Record<string, unknown>) => void) => () => void;
+  subscribe: (
+    listener: (state: Record<string, unknown>, prevState: Record<string, unknown>) => void,
+  ) => () => void;
   getState: () => Record<string, unknown>;
 }
 
@@ -44,7 +46,7 @@ const trackedStores = new Map<string, ZustandStoreApi>();
  */
 export function installZustandTracker(
   stores: Record<string, ZustandStoreApi>,
-  client: FloTraceWebSocketClient
+  client: FloTraceWebSocketClient,
 ): void {
   if (isInstalled) {
     console.warn('[FloTrace] Zustand tracker already installed, reinstalling');
@@ -66,7 +68,7 @@ export function installZustandTracker(
     ) {
       console.warn(
         `[FloTrace] Skipping "${storeName}" — not a valid Zustand store (missing getState/subscribe). ` +
-        'Ensure you pass Zustand stores like: stores={{ myStore: useMyStore }}'
+          'Ensure you pass Zustand stores like: stores={{ myStore: useMyStore }}',
       );
       continue;
     }
@@ -84,13 +86,19 @@ export function installZustandTracker(
         try {
           scheduleStoreUpdate(storeName, prevState, newState, client);
         } catch (error) {
-          console.error(`[FloTrace] Error in Zustand subscribe callback for "${storeName}":`, error);
+          console.error(
+            `[FloTrace] Error in Zustand subscribe callback for "${storeName}":`,
+            error,
+          );
         }
       });
 
       activeUnsubscribers.push(unsubscribe);
     } catch (error) {
-      console.error(`[FloTrace] Failed to install tracker for Zustand store "${storeName}":`, error);
+      console.error(
+        `[FloTrace] Failed to install tracker for Zustand store "${storeName}":`,
+        error,
+      );
     }
   }
 }
@@ -151,7 +159,7 @@ function scheduleStoreUpdate(
   storeName: string,
   prevState: Record<string, unknown>,
   newState: Record<string, unknown>,
-  client: FloTraceWebSocketClient
+  client: FloTraceWebSocketClient,
 ): void {
   let changedKeys: string[];
   try {
@@ -166,10 +174,13 @@ function scheduleStoreUpdate(
   const existing = debounceTimers.get(storeName);
   if (existing) clearTimeout(existing);
 
-  debounceTimers.set(storeName, setTimeout(() => {
-    debounceTimers.delete(storeName);
-    sendStoreUpdate(storeName, newState, changedKeys, client);
-  }, DEBOUNCE_MS));
+  debounceTimers.set(
+    storeName,
+    setTimeout(() => {
+      debounceTimers.delete(storeName);
+      sendStoreUpdate(storeName, newState, changedKeys, client);
+    }, DEBOUNCE_MS),
+  );
 }
 
 /**
@@ -179,7 +190,7 @@ function sendStoreUpdate(
   storeName: string,
   state: Record<string, unknown>,
   changedKeys: string[],
-  client: FloTraceWebSocketClient
+  client: FloTraceWebSocketClient,
 ): void {
   try {
     if (!client.connected) return;

@@ -6,22 +6,19 @@
  * All detection is heuristic and best-effort. Server Components themselves
  * don't create client-side fibers, so detection is approximate.
  */
-import type { FloTraceWebSocketClient } from "./websocketClient";
+import type { FloTraceWebSocketClient } from './websocketClient';
 
 /** File path patterns that suggest a Next.js Server Component */
 const SERVER_COMPONENT_PATTERNS: RegExp[] = [
-  /\.server\.[jt]sx?$/,     // explicit .server.tsx convention
-  /[\\/]app[\\/].+[\\/]page\.[jt]sx?$/,    // Next.js app router page
-  /[\\/]app[\\/].+[\\/]layout\.[jt]sx?$/,  // Next.js app router layout
+  /\.server\.[jt]sx?$/, // explicit .server.tsx convention
+  /[\\/]app[\\/].+[\\/]page\.[jt]sx?$/, // Next.js app router page
+  /[\\/]app[\\/].+[\\/]layout\.[jt]sx?$/, // Next.js app router layout
   /[\\/]app[\\/].+[\\/]loading\.[jt]sx?$/, // Next.js loading UI
-  /[\\/]app[\\/].+[\\/]error\.[jt]sx?$/,   // Next.js error UI
+  /[\\/]app[\\/].+[\\/]error\.[jt]sx?$/, // Next.js error UI
 ];
 
 /** Display name patterns for Next.js-generated server reference wrappers */
-const SERVER_REFERENCE_PATTERNS: RegExp[] = [
-  /_ServerReference$/,
-  /^RSC_/,
-];
+const SERVER_REFERENCE_PATTERNS: RegExp[] = [/_ServerReference$/, /^RSC_/];
 
 interface Fiber {
   _debugSource?: { fileName: string; lineNumber: number } | null;
@@ -93,13 +90,13 @@ export function detectServerComponent(fiber: Fiber): boolean {
   const type = fiber.type as FiberType | null;
   if (type) {
     const name = type.displayName || type.name || '';
-    if (SERVER_REFERENCE_PATTERNS.some(p => p.test(name))) return true;
+    if (SERVER_REFERENCE_PATTERNS.some((p) => p.test(name))) return true;
   }
 
   // Check source file path for explicit .server.* naming
   const fileName = fiber._debugSource?.fileName;
   if (fileName) {
-    if (SERVER_COMPONENT_PATTERNS.some(p => p.test(fileName))) return true;
+    if (SERVER_COMPONENT_PATTERNS.some((p) => p.test(fileName))) return true;
   }
 
   return false;

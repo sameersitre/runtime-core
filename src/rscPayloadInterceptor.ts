@@ -6,13 +6,13 @@
  * Privacy guarantee: only metadata is captured (URL path, headers, size).
  * Response bodies are never read or transmitted.
  */
-import type { FloTraceWebSocketClient } from "./websocketClient";
+import type { FloTraceWebSocketClient } from './websocketClient';
 
 /** URL patterns that identify Next.js RSC / data fetches */
 const RSC_URL_PATTERNS: RegExp[] = [
-  /\?_rsc=/,           // App Router RSC param
-  /\?__RSC__=/,        // Older Next.js RSC param
-  /\/_next\/data\//,   // Pages Router getServerSideProps / getStaticProps
+  /\?_rsc=/, // App Router RSC param
+  /\?__RSC__=/, // Older Next.js RSC param
+  /\/_next\/data\//, // Pages Router getServerSideProps / getStaticProps
   /\/__nextjs_original-stack-frame/,
 ];
 
@@ -20,10 +20,14 @@ const RSC_URL_PATTERNS: RegExp[] = [
 function parseCacheStatus(headers: Headers): 'HIT' | 'MISS' | 'STALE' | 'unknown' {
   const raw = headers.get('x-nextjs-cache') || headers.get('x-vercel-cache') || '';
   switch (raw.toUpperCase()) {
-    case 'HIT': return 'HIT';
-    case 'MISS': return 'MISS';
-    case 'STALE': return 'STALE';
-    default: return 'unknown';
+    case 'HIT':
+      return 'HIT';
+    case 'MISS':
+      return 'MISS';
+    case 'STALE':
+      return 'STALE';
+    default:
+      return 'unknown';
   }
 }
 
@@ -68,12 +72,15 @@ export function installRscPayloadInterceptor(client: FloTraceWebSocketClient): v
     input: RequestInfo | URL,
     init?: RequestInit,
   ): Promise<Response> {
-    const url = typeof input === 'string' ? input
-      : input instanceof URL ? input.href
-      : (input as Request).url;
+    const url =
+      typeof input === 'string'
+        ? input
+        : input instanceof URL
+          ? input.href
+          : (input as Request).url;
 
     // Delegate non-RSC requests immediately to avoid any overhead
-    const isRscRequest = RSC_URL_PATTERNS.some(p => p.test(url));
+    const isRscRequest = RSC_URL_PATTERNS.some((p) => p.test(url));
 
     // Always call the original fetch — we never block requests
     const response = await capturedOriginalFetch.call(globalThis, input, init);

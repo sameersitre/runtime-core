@@ -13,7 +13,13 @@
  * Uses duck-typed interface — no @tanstack/react-query dependency needed.
  */
 
-import type { SerializedValue, TanStackQueryInfo, TanStackMutationInfo, TanStackQueryEvent, MutationCorrelation } from './types';
+import type {
+  SerializedValue,
+  TanStackQueryInfo,
+  TanStackMutationInfo,
+  TanStackQueryEvent,
+  MutationCorrelation,
+} from './types';
 import { serializeValue } from './serializer';
 import type { FloTraceWebSocketClient } from './websocketClient';
 import { findFetchOrigin } from './fetchOriginRegistry';
@@ -165,7 +171,6 @@ const mutationPrevStatus = new Map<number, string>();
 /** Maps mutationId → last correlationId for UI cross-reference */
 const mutationCorrelationMap = new Map<number, string>();
 
-
 // ============================================================================
 // Validation
 // ============================================================================
@@ -262,12 +267,20 @@ export function uninstallTanStackQueryTracker(): void {
   }
 
   if (queryUnsubscribe) {
-    try { queryUnsubscribe(); } catch (e) { console.error('[FloTrace] Error unsubscribing from QueryCache:', e); }
+    try {
+      queryUnsubscribe();
+    } catch (e) {
+      console.error('[FloTrace] Error unsubscribing from QueryCache:', e);
+    }
     queryUnsubscribe = null;
   }
 
   if (mutationUnsubscribe) {
-    try { mutationUnsubscribe(); } catch (e) { console.error('[FloTrace] Error unsubscribing from MutationCache:', e); }
+    try {
+      mutationUnsubscribe();
+    } catch (e) {
+      console.error('[FloTrace] Error unsubscribing from MutationCache:', e);
+    }
     mutationUnsubscribe = null;
   }
 
@@ -689,9 +702,7 @@ function sendSnapshot(
     }
 
     // Flush completed correlations
-    const correlations = completedCorrelations.length > 0
-      ? [...completedCorrelations]
-      : undefined;
+    const correlations = completedCorrelations.length > 0 ? [...completedCorrelations] : undefined;
     if (correlations) {
       completedCorrelations = [];
     }

@@ -23,9 +23,7 @@ const DefaultStubClientOverrides: { connected: boolean } = {
   connected: true,
 };
 
-export function createStubClient(
-  overrides: Partial<{ connected: boolean }> = {},
-): StubClient {
+export function createStubClient(overrides: Partial<{ connected: boolean }> = {}): StubClient {
   const sent: RuntimeMessage[] = [];
   const stub = {
     sent,

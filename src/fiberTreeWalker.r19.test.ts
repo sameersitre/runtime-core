@@ -54,9 +54,7 @@ describe('fiberTreeWalker — R19 additions', () => {
 
     test('returns true when a single useTransition has isPending=true', () => {
       expect(
-        detectTransitionPending(
-          createSyntheticFiber({ hookStates: [createTransitionHook(true)] }),
-        ),
+        detectTransitionPending(createSyntheticFiber({ hookStates: [createTransitionHook(true)] })),
       ).toBe(true);
     });
 
@@ -89,15 +87,13 @@ describe('fiberTreeWalker — R19 additions', () => {
 
       // Length != 2 (e.g. useActionState's 3-tuple [state, dispatch, isPending])
       expect(
-        detectTransitionPending(
-          createSyntheticFiber({ hookStates: [['s', () => {}, true]] }),
-        ),
+        detectTransitionPending(createSyntheticFiber({ hookStates: [['s', () => {}, true]] })),
       ).toBe(false);
 
       // First element is not a boolean
-      expect(
-        detectTransitionPending(createSyntheticFiber({ hookStates: [[42, () => {}]] })),
-      ).toBe(false);
+      expect(detectTransitionPending(createSyntheticFiber({ hookStates: [[42, () => {}]] }))).toBe(
+        false,
+      );
 
       // Second element is not a function
       expect(

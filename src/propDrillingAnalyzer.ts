@@ -4,7 +4,12 @@
  * 3+ levels with passthrough components that don't consume them.
  * Debounced to 2s — structural analysis runs infrequently.
  */
-import type { LiveTreeNode, PropDrillingChain, PropDrillingChainNode, RuntimeMessage } from './types';
+import type {
+  LiveTreeNode,
+  PropDrillingChain,
+  PropDrillingChainNode,
+  RuntimeMessage,
+} from './types';
 import type { Fiber } from './fiberTreeWalker';
 
 // Runtime WebSocket client type (duck-typed to avoid circular import)
@@ -28,16 +33,40 @@ interface PathNode {
 /** Props that are intentionally passed at every level — never drilling. */
 const EXCLUDED_PROP_NAMES = new Set([
   // React internals
-  'children', 'key', 'ref',
+  'children',
+  'key',
+  'ref',
   // Common HTML attributes
-  'className', 'style', 'id', 'name', 'type', 'value', 'placeholder',
-  'disabled', 'readOnly', 'required', 'autoFocus', 'tabIndex',
-  'role', 'aria-label', 'aria-describedby', 'aria-hidden',
-  'title', 'lang', 'dir', 'hidden',
+  'className',
+  'style',
+  'id',
+  'name',
+  'type',
+  'value',
+  'placeholder',
+  'disabled',
+  'readOnly',
+  'required',
+  'autoFocus',
+  'tabIndex',
+  'role',
+  'aria-label',
+  'aria-describedby',
+  'aria-hidden',
+  'title',
+  'lang',
+  'dir',
+  'hidden',
   // Common layout props
-  'width', 'height', 'size', 'variant', 'color', 'theme',
+  'width',
+  'height',
+  'size',
+  'variant',
+  'color',
+  'theme',
   // Test IDs
-  'data-testid', 'testID',
+  'data-testid',
+  'testID',
 ]);
 
 /** Returns true if this prop should never be flagged as drilling. */
@@ -66,12 +95,18 @@ export function valueFingerprint(value: unknown, depth = 0): string {
 
   if (Array.isArray(value)) {
     const arr = value as unknown[];
-    return `arr:${arr.length}:${arr.slice(0, 5).map((v) => valueFingerprint(v, depth + 1)).join(',')}`;
+    return `arr:${arr.length}:${arr
+      .slice(0, 5)
+      .map((v) => valueFingerprint(v, depth + 1))
+      .join(',')}`;
   }
 
   const obj = value as Record<string, unknown>;
   const keys = Object.keys(obj).sort();
-  return `obj:${keys.slice(0, 10).map((k) => `${k}=${valueFingerprint(obj[k], depth + 1)}`).join(',')}`;
+  return `obj:${keys
+    .slice(0, 10)
+    .map((k) => `${k}=${valueFingerprint(obj[k], depth + 1)}`)
+    .join(',')}`;
 }
 
 /**
@@ -82,7 +117,8 @@ export function shouldFlagRename(value: unknown): boolean {
   if (value === null || value === undefined) return false;
   if (typeof value !== 'object') return false;
   if (Array.isArray(value) && (value as unknown[]).length === 0) return false;
-  if (!Array.isArray(value) && Object.keys(value as Record<string, unknown>).length === 0) return false;
+  if (!Array.isArray(value) && Object.keys(value as Record<string, unknown>).length === 0)
+    return false;
   return true;
 }
 
@@ -91,9 +127,9 @@ export function shouldFlagRename(value: unknown): boolean {
 interface PropFlowEdge {
   parentNodeId: string;
   childNodeId: string;
-  propKey: string;      // prop name at parent
+  propKey: string; // prop name at parent
   childPropKey: string; // prop name at child (may differ if renamed)
-  fp: string;           // value fingerprint
+  fp: string; // value fingerprint
 }
 
 // --- Classification helpers ---
@@ -439,8 +475,14 @@ function runAnalysis(
         // the correct predecessor in the full path, not the filtered-array position.
         const renames = path.flatMap((p, idx) =>
           p.isRename
-            ? [{ atNodeId: p.nodeId, fromKey: idx > 0 ? path[idx - 1].propKey : sourcePropName, toKey: p.propKey }]
-            : []
+            ? [
+                {
+                  atNodeId: p.nodeId,
+                  fromKey: idx > 0 ? path[idx - 1].propKey : sourcePropName,
+                  toKey: p.propKey,
+                },
+              ]
+            : [],
         );
 
         chains.push({

@@ -27,8 +27,8 @@ import type { LiveTreeNode } from './types';
 // Caps — bound memory regardless of how long recording runs.
 // ---------------------------------------------------------------------------
 
-const MAX_FIBER_RECORDS = 500;     // unique component names
-const MAX_TREE_RECORDS = 50;       // snapshot history depth
+const MAX_FIBER_RECORDS = 500; // unique component names
+const MAX_TREE_RECORDS = 50; // snapshot history depth
 const MAX_TOP_NAMES_PER_SNAPSHOT = 10;
 const MAX_CONTEXTS_PER_FIBER = 8;
 
@@ -168,7 +168,13 @@ export function describeFiberType(fiber: FiberLike): {
   const type = fiber.type;
 
   if (typeof type === 'string') {
-    return { kind: 'host', name: type, displayName: undefined, resolved: type, looksMinified: false };
+    return {
+      kind: 'host',
+      name: type,
+      displayName: undefined,
+      resolved: type,
+      looksMinified: false,
+    };
   }
 
   if (isFiberFunctionType(type)) {
@@ -205,10 +211,22 @@ export function describeFiberType(fiber: FiberLike): {
       };
     }
     const resolved = type.displayName ?? type.name ?? 'Unknown';
-    return { kind: 'unknown', name: type.name, displayName: type.displayName, resolved, looksMinified: looksMinified(resolved) };
+    return {
+      kind: 'unknown',
+      name: type.name,
+      displayName: type.displayName,
+      resolved,
+      looksMinified: looksMinified(resolved),
+    };
   }
 
-  return { kind: 'unknown', name: undefined, displayName: undefined, resolved: 'Unknown', looksMinified: false };
+  return {
+    kind: 'unknown',
+    name: undefined,
+    displayName: undefined,
+    resolved: 'Unknown',
+    looksMinified: false,
+  };
 }
 
 function looksMinified(name: string): boolean {
@@ -335,8 +353,7 @@ function installConsoleApi(): void {
       const fiberRows = serializeFiberRecords();
       const snapRows = serializeTreeRecords();
       const minifiedCount = fiberRows.filter((r) => r.looksMinified).length;
-      const elapsedSec =
-        recordingStartedAt === null ? 0 : (Date.now() - recordingStartedAt) / 1000;
+      const elapsedSec = recordingStartedAt === null ? 0 : (Date.now() - recordingStartedAt) / 1000;
       const summary = [
         {
           metric: 'uniqueComponents',
@@ -451,7 +468,9 @@ function installConsoleApi(): void {
       const URLRef = (globalThis as { URL?: typeof URL }).URL;
       if (!docRef || !URLRef || typeof URLRef.createObjectURL !== 'function') {
         // eslint-disable-next-line no-console
-        console.warn('[FT debug] download() requires a browser environment — printing JSON instead');
+        console.warn(
+          '[FT debug] download() requires a browser environment — printing JSON instead',
+        );
         // eslint-disable-next-line no-console
         console.log(json);
         return;

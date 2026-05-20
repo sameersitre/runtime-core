@@ -259,9 +259,9 @@ describe('nextjsDetector', () => {
       'src/components/Foo.server.jsx',
       'src/components/Foo.server.js',
     ])('returns true for explicit server file extension: %s', (fileName) => {
-      expect(
-        detectServerComponent({ type: null, _debugSource: { fileName, lineNumber: 1 } }),
-      ).toBe(true);
+      expect(detectServerComponent({ type: null, _debugSource: { fileName, lineNumber: 1 } })).toBe(
+        true,
+      );
     });
 
     test.each([
@@ -271,16 +271,16 @@ describe('nextjsDetector', () => {
       '/repo/app/users/loading.tsx',
       '/repo/app/users/error.tsx',
     ])('returns true for Next.js App Router file: %s', (fileName) => {
-      expect(
-        detectServerComponent({ type: null, _debugSource: { fileName, lineNumber: 1 } }),
-      ).toBe(true);
+      expect(detectServerComponent({ type: null, _debugSource: { fileName, lineNumber: 1 } })).toBe(
+        true,
+      );
     });
 
     test('matches Windows-style backslash paths', () => {
       const fileName = String.raw`C:\repo\app\users\page.tsx`;
-      expect(
-        detectServerComponent({ type: null, _debugSource: { fileName, lineNumber: 1 } }),
-      ).toBe(true);
+      expect(detectServerComponent({ type: null, _debugSource: { fileName, lineNumber: 1 } })).toBe(
+        true,
+      );
     });
 
     test('returns false for non-app-router files (pages/ router, src/, generic app/ files)', () => {

@@ -55,10 +55,7 @@ export function isReduxStore(obj: unknown): obj is ReduxStoreApi {
  * Install Redux store tracking.
  * Subscribes to the store and sends runtime:redux messages on state change.
  */
-export function installReduxTracker(
-  store: ReduxStoreApi,
-  client: FloTraceWebSocketClient
-): void {
+export function installReduxTracker(store: ReduxStoreApi, client: FloTraceWebSocketClient): void {
   if (isInstalled) {
     console.warn('[FloTrace] Redux tracker already installed, reinstalling');
     uninstallReduxTracker();
@@ -134,7 +131,7 @@ export function getReduxSnapshot(): Record<string, unknown> | null {
  */
 function scheduleReduxUpdate(
   newState: Record<string, unknown>,
-  client: FloTraceWebSocketClient
+  client: FloTraceWebSocketClient,
 ): void {
   let changedKeys: string[];
   try {
@@ -162,7 +159,7 @@ function scheduleReduxUpdate(
 function sendReduxUpdate(
   state: Record<string, unknown>,
   changedKeys: string[],
-  client: FloTraceWebSocketClient
+  client: FloTraceWebSocketClient,
 ): void {
   try {
     if (!client.connected) return;

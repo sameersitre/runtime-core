@@ -12,22 +12,38 @@
  * from the Profiler's onRender callback - so tree walks happen after each React commit.
  */
 
-import type { LiveTreeNode, RuntimeTreeDiffMessage, SerializedValue, DetailedRenderReason, PropChange, HookInfo, EffectInfo, SourceConfidence } from "./types";
-import { readJsxSourceFromFiber, type FlotraceJsxSource } from "./jsxRuntimeUtils";
-import { serializeValue, serializeProps } from "./serializer";
-import { getWebSocketClient } from "./websocketClient";
-import { inspectHooks } from "./hookInspector";
-import { inspectEffects } from "./effectInspector";
-import { recordTimelineEvent } from "./timelineTracker";
-import { wrapFiberDispatchers, peekTriggers, clearTriggers } from "./dispatchWrapper";
-import { analyzeCascade } from "./cascadeAnalyzer";
-import { schedulePropDrillingAnalysis } from "./propDrillingAnalyzer";
-import { detectCompilerStatus } from "./compilerAnalyzer";
-import { detectServerComponent, maybeEmitNextjsContext, resetNextjsDetection } from "./nextjsDetector";
-import { scanActionStateChanges, clearActionStateCache } from "./actionStateTracker";
-import { installRscPayloadInterceptor, uninstallRscPayloadInterceptor } from "./rscPayloadInterceptor";
-import { findFetchOrigin, hasActiveTags } from "./fetchOriginRegistry";
-import { logFiberType, logTreeSnapshot, logTreeSummary } from "./fiberDebugLogger";
+import type {
+  LiveTreeNode,
+  RuntimeTreeDiffMessage,
+  SerializedValue,
+  DetailedRenderReason,
+  PropChange,
+  HookInfo,
+  EffectInfo,
+  SourceConfidence,
+} from './types';
+import { readJsxSourceFromFiber, type FlotraceJsxSource } from './jsxRuntimeUtils';
+import { serializeValue, serializeProps } from './serializer';
+import { getWebSocketClient } from './websocketClient';
+import { inspectHooks } from './hookInspector';
+import { inspectEffects } from './effectInspector';
+import { recordTimelineEvent } from './timelineTracker';
+import { wrapFiberDispatchers, peekTriggers, clearTriggers } from './dispatchWrapper';
+import { analyzeCascade } from './cascadeAnalyzer';
+import { schedulePropDrillingAnalysis } from './propDrillingAnalyzer';
+import { detectCompilerStatus } from './compilerAnalyzer';
+import {
+  detectServerComponent,
+  maybeEmitNextjsContext,
+  resetNextjsDetection,
+} from './nextjsDetector';
+import { scanActionStateChanges, clearActionStateCache } from './actionStateTracker';
+import {
+  installRscPayloadInterceptor,
+  uninstallRscPayloadInterceptor,
+} from './rscPayloadInterceptor';
+import { findFetchOrigin, hasActiveTags } from './fetchOriginRegistry';
+import { logFiberType, logTreeSnapshot, logTreeSummary } from './fiberDebugLogger';
 export type { SerializedValue };
 
 // React fiber tag constants (from React source: ReactWorkTags.js)
@@ -78,7 +94,7 @@ export interface Fiber {
   _debugSource?: { fileName: string; lineNumber: number } | null;
   /** React 19+: fiber that created this fiber (owner chain). */
   _debugOwner?: Fiber | null;
-/** React 19.1+: Error captured at JSX creation site (replaces _debugSource in React 19+). */
+  /** React 19.1+: Error captured at JSX creation site (replaces _debugSource in React 19+). */
   _debugStack?: { stack?: string } | null;
   /** Hook state linked list head (useState, useRef, useMemo, etc.) */
   memoizedState: FiberHookState | null;
@@ -107,8 +123,7 @@ function isLikelyQueryObserver(obj: unknown): obj is Record<string, unknown> {
   if (obj === null || typeof obj !== 'object') return false;
   const candidate = obj as Record<string, unknown>;
   return (
-    typeof candidate.getCurrentResult === 'function' &&
-    typeof candidate.subscribe === 'function'
+    typeof candidate.getCurrentResult === 'function' && typeof candidate.subscribe === 'function'
   );
 }
 
@@ -213,7 +228,12 @@ function detectTransitionPending(fiber: Fiber): boolean {
   while (state && iterations < 100) {
     iterations++;
     const ms = state.memoizedState;
-    if (Array.isArray(ms) && ms.length === 2 && typeof ms[0] === 'boolean' && typeof ms[1] === 'function') {
+    if (
+      Array.isArray(ms) &&
+      ms.length === 2 &&
+      typeof ms[0] === 'boolean' &&
+      typeof ms[1] === 'function'
+    ) {
       if (ms[0] === true) return true;
     }
     state = state.next as FiberHookState | null;
@@ -291,11 +311,7 @@ interface FiberRoot {
  * The global hook React DevTools uses. We piggyback on it.
  */
 interface DevToolsHook {
-  onCommitFiberRoot?: (
-    rendererID: number,
-    root: FiberRoot,
-    priority?: number,
-  ) => void;
+  onCommitFiberRoot?: (rendererID: number, root: FiberRoot, priority?: number) => void;
 }
 
 declare global {
@@ -310,7 +326,9 @@ declare global {
   }
 }
 
-type DevToolsHookGlobal = { __REACT_DEVTOOLS_GLOBAL_HOOK__?: DevToolsHook & Record<string, unknown> };
+type DevToolsHookGlobal = {
+  __REACT_DEVTOOLS_GLOBAL_HOOK__?: DevToolsHook & Record<string, unknown>;
+};
 
 // Tree size limits to prevent JSON.stringify "Invalid string length" errors
 // in large apps (e.g., tables with hundreds of rows)
@@ -336,10 +354,14 @@ let cachedFiberRoot: FiberRoot | null = null;
 let isWalking = false;
 
 // Accumulated useState/useReducer → API correlations during walkFiber, flushed after tree is built
-let pendingLocalStateCorrelations: Array<{ requestId: string; componentName: string; hookIndex: number }> = [];
+const pendingLocalStateCorrelations: Array<{
+  requestId: string;
+  componentName: string;
+  hookIndex: number;
+}> = [];
 
 // Store the original hook so we can restore it
-let originalOnCommitFiberRoot: DevToolsHook["onCommitFiberRoot"] | null = null;
+let originalOnCommitFiberRoot: DevToolsHook['onCommitFiberRoot'] | null = null;
 let isInstalled = false;
 let hookedRendererID: number | null = null;
 
@@ -438,9 +460,7 @@ let walkerFilterConfig: WalkerFilterConfig = defaultFilterConfig();
 // Test-only escape hatch — lets unit tests seed filter state without going
 // through `installFiberTreeWalker` (which requires a browser-like environment,
 // DevTools hooks, WebSocket, etc.). Not re-exported from `index.ts`.
-export function __setWalkerFilterConfigForTesting(
-  partial: Partial<WalkerFilterConfig>,
-): void {
+export function __setWalkerFilterConfigForTesting(partial: Partial<WalkerFilterConfig>): void {
   walkerFilterConfig = { ...defaultFilterConfig(), ...partial };
 }
 export function __resetWalkerFilterConfigForTesting(): void {
@@ -448,7 +468,7 @@ export function __resetWalkerFilterConfigForTesting(): void {
 }
 
 // Track which strategy is active
-let activeStrategy: "devtools" | "dom" | null = null;
+let activeStrategy: 'devtools' | 'dom' | null = null;
 
 // Track when the last snapshot was actually sent, so the Profiler-based
 // fallback can kick in if the DevTools hook stops firing (React 19 compat).
@@ -458,7 +478,11 @@ const DEVTOOLS_STALE_THRESHOLD_MS = 2000; // If no DevTools snapshot in 2s, allo
 // Debug logging — disabled by default to avoid polluting the user's browser console.
 // Enable via: window.__FLOTRACE_DEBUG__ = true
 let debugEnabled = false;
-try { debugEnabled = !!(globalThis as unknown as { __FLOTRACE_DEBUG__?: boolean }).__FLOTRACE_DEBUG__; } catch { /* SSR safe */ }
+try {
+  debugEnabled = !!(globalThis as unknown as { __FLOTRACE_DEBUG__?: boolean }).__FLOTRACE_DEBUG__;
+} catch {
+  /* SSR safe */
+}
 function debugLog(...args: unknown[]): void {
   if (debugEnabled) console.log(...args);
 }
@@ -472,37 +496,35 @@ let fiberRefMap: Map<string, Fiber> = new Map();
  * Get the display name of a fiber's component type.
  */
 function getComponentName(fiber: Fiber): string {
-  logFiberType(fiber, "getName");
+  logFiberType(fiber, 'getName');
   const type = fiber.type;
-  if (!type) return "Unknown";
+  if (!type) return 'Unknown';
 
   // Direct function/class component
-  if (typeof type === "function") {
-    return (
-      (type as FiberType).displayName || (type as FiberType).name || "Anonymous"
-    );
+  if (typeof type === 'function') {
+    return (type as FiberType).displayName || (type as FiberType).name || 'Anonymous';
   }
 
   // Object-based types (ForwardRef, Memo)
-  if (typeof type === "object" && type !== null) {
+  if (typeof type === 'object' && type !== null) {
     const t = type as FiberType;
     // Memo wraps type
     if (t.type) {
-      return t.type.displayName || t.type.name || "Memo";
+      return t.type.displayName || t.type.name || 'Memo';
     }
     // ForwardRef wraps render
     if (t.render) {
-      return t.render.displayName || t.render.name || "ForwardRef";
+      return t.render.displayName || t.render.name || 'ForwardRef';
     }
-    return t.displayName || t.name || "Unknown";
+    return t.displayName || t.name || 'Unknown';
   }
 
   // String type means host component (div, span)
-  if (typeof type === "string") {
+  if (typeof type === 'string') {
     return type;
   }
 
-  return "Unknown";
+  return 'Unknown';
 }
 
 /**
@@ -515,23 +537,18 @@ function isUserComponent(fiber: Fiber): boolean {
   const name = getComponentName(fiber);
 
   // Filter generic React wrapper names that have no specific component identity
-  if (
-    name === "Anonymous" ||
-    name === "Unknown" ||
-    name === "ForwardRef" ||
-    name === "Memo"
-  )
+  if (name === 'Anonymous' || name === 'Unknown' || name === 'ForwardRef' || name === 'Memo')
     return false;
 
   // Filter FloTrace's own internal components (provider, profiler wrapper, HOC wrappers)
-  if (name.startsWith("FloTrace")) return false;
+  if (name.startsWith('FloTrace')) return false;
 
   // Filter library-style displayNames (e.g., "@mantine/core/Box", "@radix-ui/Popover").
   // Libraries set displayName with the scoped package path — user components never do this.
   // NOTE: This filters the *displayName* string, not the import path. A component `function Header()`
   // imported from `@common/components/header.tsx` (monorepo scoped package) will have
   // name = "Header" here, so it is NOT affected by this filter.
-  if (name.startsWith("@") || name.includes("/")) return false;
+  if (name.startsWith('@') || name.includes('/')) return false;
 
   // Filter React Compiler-generated cache variable names (e.g., "_c", "_T", "$r").
   // These are short identifiers starting with _ or $ — not real component names; pure noise.
@@ -540,7 +557,7 @@ function isUserComponent(fiber: Fiber): boolean {
   // If _debugSource points to node_modules, it's a pre-bundled library component.
   // Monorepo workspace packages in dev mode resolve via symlinks to their actual source paths
   // (e.g., /workspace/packages/ui/src/Button.tsx), so they are NOT affected by this check.
-  if (fiber._debugSource?.fileName?.includes("node_modules")) return false;
+  if (fiber._debugSource?.fileName?.includes('node_modules')) return false;
 
   // Platform host-component prefix filter — mirrors the DOM-element skip on web.
   // React Native leaks `RCTView`/`RCTScrollView`/etc. through as user-component-tag
@@ -570,22 +587,46 @@ function isUserComponent(fiber: Fiber): boolean {
  */
 const FRAMEWORK_COMPONENT_NAMES: Set<string> = new Set([
   // Next.js App Router internals (Next.js 13–14)
-  "InnerLayoutRouter", "OuterLayoutRouter", "HotReload", "RedirectBoundary",
-  "NotFoundBoundary", "RenderFromTemplateContext", "ScrollAndFocusHandler",
-  "AppRouter", "ServerRoot", "ReactDevOverlay", "PathnameContextProviderAdapter",
-  "MetadataBoundary", "ViewportBoundary", "NotFoundErrorBoundary",
-  "RedirectErrorBoundary", "InnerScrollAndFocusHandler", "GlobalError",
+  'InnerLayoutRouter',
+  'OuterLayoutRouter',
+  'HotReload',
+  'RedirectBoundary',
+  'NotFoundBoundary',
+  'RenderFromTemplateContext',
+  'ScrollAndFocusHandler',
+  'AppRouter',
+  'ServerRoot',
+  'ReactDevOverlay',
+  'PathnameContextProviderAdapter',
+  'MetadataBoundary',
+  'ViewportBoundary',
+  'NotFoundErrorBoundary',
+  'RedirectErrorBoundary',
+  'InnerScrollAndFocusHandler',
+  'GlobalError',
   // Next.js 15 / React 19 new internals
-  "ViewTransition",        // Next.js 15 shared-element transition wrapper
-  "ActionStateContext",    // Next.js 15 server action state context provider
-  "RequestCookiesProvider", "DraftModeProvider",
+  'ViewTransition', // Next.js 15 shared-element transition wrapper
+  'ActionStateContext', // Next.js 15 server action state context provider
+  'RequestCookiesProvider',
+  'DraftModeProvider',
   // React Router v6 / v7
-  "Routes", "Route", "Router", "BrowserRouter", "HashRouter", "MemoryRouter",
-  "Outlet", "Navigate", "RenderedRoute", "RouterProvider",
+  'Routes',
+  'Route',
+  'Router',
+  'BrowserRouter',
+  'HashRouter',
+  'MemoryRouter',
+  'Outlet',
+  'Navigate',
+  'RenderedRoute',
+  'RouterProvider',
   // React 19 built-in primitives
-  "Activity",              // React 19: show/hide subtrees while preserving state (was <Offscreen>)
+  'Activity', // React 19: show/hide subtrees while preserving state (was <Offscreen>)
   // Common library wrappers
-  "Suspense", "ErrorBoundary", "QueryClientProvider", "PersistGate",
+  'Suspense',
+  'ErrorBoundary',
+  'QueryClientProvider',
+  'PersistGate',
 ]);
 
 /**
@@ -596,27 +637,27 @@ const FRAMEWORK_PATH_PATTERNS: RegExp[] = [
   // React core / Next.js
   /next[\\/]dist/,
   /react-dom/,
-  /[\\/]scheduler[\\/]/,    // React internal scheduler package
+  /[\\/]scheduler[\\/]/, // React internal scheduler package
   // Routing
-  /react-router/,            // React Router v6
-  /@react-router[\\/]/,     // React Router v7 (scoped package)
+  /react-router/, // React Router v6
+  /@react-router[\\/]/, // React Router v7 (scoped package)
   // State management
-  /@tanstack[\\/]/,          // TanStack Query / Table / Router / Form / Virtual
+  /@tanstack[\\/]/, // TanStack Query / Table / Router / Form / Virtual
   /react-redux/,
   /zustand/,
   /jotai/,
   /recoil/,
   // UI component libraries (for when source maps are available)
-  /@fortawesome[\\/]/,       // Font Awesome icons
-  /framer-motion/,           // Framer Motion (PresenceChild, AnimatePresence, etc.)
-  /sonner/,                  // Sonner toast
-  /@radix-ui[\\/]/,          // Radix UI primitives
-  /@headlessui[\\/]/,        // Headless UI
-  /@mui[\\/]/,               // Material UI
-  /@chakra-ui[\\/]/,         // Chakra UI
-  /react-spring/,            // React Spring
-  /react-transition-group/,  // React Transition Group
-  /react-aria/,              // Adobe React Aria
+  /@fortawesome[\\/]/, // Font Awesome icons
+  /framer-motion/, // Framer Motion (PresenceChild, AnimatePresence, etc.)
+  /sonner/, // Sonner toast
+  /@radix-ui[\\/]/, // Radix UI primitives
+  /@headlessui[\\/]/, // Headless UI
+  /@mui[\\/]/, // Material UI
+  /@chakra-ui[\\/]/, // Chakra UI
+  /react-spring/, // React Spring
+  /react-transition-group/, // React Transition Group
+  /react-aria/, // Adobe React Aria
   /react-hook-form/,
   /formik/,
 ];
@@ -842,11 +883,7 @@ function detectLibraryName(fiber: Fiber, name: string): string | undefined {
  * Build a path-based stable ID for a fiber node.
  * Format: "App-0/Dashboard-0/Card-2"
  */
-function buildNodeId(
-  name: string,
-  sameNameIndex: number,
-  parentId: string,
-): string {
+function buildNodeId(name: string, sameNameIndex: number, parentId: string): string {
   const segment = `${name}-${sameNameIndex}`;
   return parentId ? `${parentId}/${segment}` : segment;
 }
@@ -917,8 +954,7 @@ function scanFiberStateForOrigin(fiber: Fiber, componentName: string): void {
       if (ms !== null && typeof ms === 'object') {
         // Skip effect hooks: {tag, create, deps} shape
         const isEffect =
-          'tag' in (ms as Record<string, unknown>) &&
-          'create' in (ms as Record<string, unknown>);
+          'tag' in (ms as Record<string, unknown>) && 'create' in (ms as Record<string, unknown>);
         if (!isEffect) {
           const rid = findFetchOrigin(ms);
           if (rid) {
@@ -935,7 +971,9 @@ function scanFiberStateForOrigin(fiber: Fiber, componentName: string): void {
           }
         }
       }
-    } catch { /* never break the tree walk */ }
+    } catch {
+      /* never break the tree walk */
+    }
     hook = hook.next;
     hookIndex++;
   }
@@ -1040,9 +1078,7 @@ function walkFiber(
         // Store fiber reference for on-demand props lookup via getNodeProps()
         fiberRefMap.set(nodeId, current);
 
-        const renderPhase: "mount" | "update" = current.alternate
-          ? "update"
-          : "mount";
+        const renderPhase: 'mount' | 'update' = current.alternate ? 'update' : 'mount';
         const renderReason = detectRenderReason(current, renderPhase);
 
         // Record timeline event for this component
@@ -1056,13 +1092,7 @@ function walkFiber(
 
         // Children of a user component start with a fresh nameCountMap (new parent level)
         // Increment depth for user component nesting
-        const children = walkFiber(
-          current.child,
-          nodeId,
-          undefined,
-          depth + 1,
-          inSuspenseFallback,
-        );
+        const children = walkFiber(current.child, nodeId, undefined, depth + 1, inSuspenseFallback);
 
         // Truncate children if there are too many (e.g., large tables/lists)
         const truncatedChildren =
@@ -1158,7 +1188,7 @@ function walkFiber(
           );
           nodes.push(...childNodes);
         } else {
-          debugLog("[FloTrace] SuspenseComponent has no walkable children");
+          debugLog('[FloTrace] SuspenseComponent has no walkable children');
         }
       } else if (tag === FIBER_TAGS.OffscreenComponent) {
         // React 18+ OffscreenComponent: wraps Suspense primary/fallback content.
@@ -1175,7 +1205,7 @@ function walkFiber(
           );
           nodes.push(...childNodes);
         } else {
-          debugLog("[FloTrace] Skipping hidden OffscreenComponent subtree");
+          debugLog('[FloTrace] Skipping hidden OffscreenComponent subtree');
         }
       } else {
         // For transparent wrappers (host components, fragments, providers, etc.):
@@ -1210,7 +1240,7 @@ function walkFiber(
 function buildTreeFromFiberRoot(root: FiberRoot): LiveTreeNode | null {
   const rootFiber = root.current;
   if (!rootFiber || !rootFiber.child) {
-    console.warn("[FloTrace] No root fiber or no child:", {
+    console.warn('[FloTrace] No root fiber or no child:', {
       hasRoot: !!rootFiber,
       hasChild: !!rootFiber?.child,
     });
@@ -1220,12 +1250,8 @@ function buildTreeFromFiberRoot(root: FiberRoot): LiveTreeNode | null {
   // Clear fiber reference map before rebuilding (reuse to reduce GC pressure)
   fiberRefMap.clear();
 
-  const topLevelNodes = walkFiber(rootFiber.child, "");
-  debugLog(
-    "[FloTrace] walkFiber found",
-    topLevelNodes.length,
-    "top-level nodes",
-  );
+  const topLevelNodes = walkFiber(rootFiber.child, '');
+  debugLog('[FloTrace] walkFiber found', topLevelNodes.length, 'top-level nodes');
 
   if (topLevelNodes.length === 1) {
     return topLevelNodes[0];
@@ -1233,8 +1259,8 @@ function buildTreeFromFiberRoot(root: FiberRoot): LiveTreeNode | null {
 
   if (topLevelNodes.length > 0) {
     return {
-      id: "Root",
-      name: "Root",
+      id: 'Root',
+      name: 'Root',
       children: topLevelNodes,
       fiberTag: FIBER_TAGS.HostRoot,
     };
@@ -1254,10 +1280,10 @@ function buildTreeFromFiberRoot(root: FiberRoot): LiveTreeNode | null {
  */
 function findFiberRootFromDOM(): FiberRoot | null {
   try {
-    if (typeof document === "undefined") return null;
+    if (typeof document === 'undefined') return null;
 
     // Common root element selectors
-    const selectors = ["#root", "#__next", "#app", "#__nuxt", "[data-reactroot]"];
+    const selectors = ['#root', '#__next', '#app', '#__nuxt', '[data-reactroot]'];
 
     for (const selector of selectors) {
       const element = document.querySelector(selector);
@@ -1269,13 +1295,13 @@ function findFiberRootFromDOM(): FiberRoot | null {
         element.id,
       );
       const reactKeys = Object.keys(element).filter(
-        (k) => k.startsWith("__react") || k.startsWith("_react"),
+        (k) => k.startsWith('__react') || k.startsWith('_react'),
       );
       debugLog(`[FloTrace] React keys on element:`, reactKeys);
 
       const fiberRoot = getFiberRootFromElement(element);
       if (fiberRoot) {
-        debugLog("[FloTrace] Found fiber root from selector:", selector);
+        debugLog('[FloTrace] Found fiber root from selector:', selector);
         return fiberRoot;
       }
     }
@@ -1284,41 +1310,39 @@ function findFiberRootFromDOM(): FiberRoot | null {
     const allBodyChildren = document.body?.children;
     if (allBodyChildren) {
       debugLog(
-        "[FloTrace] Scanning all",
+        '[FloTrace] Scanning all',
         allBodyChildren.length,
-        "body children for React root...",
+        'body children for React root...',
       );
       for (const child of Array.from(allBodyChildren)) {
         const reactKeys = Object.keys(child).filter(
-          (k) => k.startsWith("__react") || k.startsWith("_react"),
+          (k) => k.startsWith('__react') || k.startsWith('_react'),
         );
         if (reactKeys.length > 0) {
           debugLog(
-            "[FloTrace] React keys on",
+            '[FloTrace] React keys on',
             child.tagName,
-            child.id || "(no id)",
-            ":",
+            child.id || '(no id)',
+            ':',
             reactKeys,
           );
         }
         const fiberRoot = getFiberRootFromElement(child);
         if (fiberRoot) {
           debugLog(
-            "[FloTrace] Found fiber root from body child scan:",
+            '[FloTrace] Found fiber root from body child scan:',
             child.tagName,
-            child.id || "(no id)",
+            child.id || '(no id)',
           );
           return fiberRoot;
         }
       }
     }
 
-    console.warn(
-      "[FloTrace] Could not find React fiber root from any DOM element",
-    );
+    console.warn('[FloTrace] Could not find React fiber root from any DOM element');
     return null;
   } catch (error) {
-    console.error("[FloTrace] Error finding fiber root from DOM:", error);
+    console.error('[FloTrace] Error finding fiber root from DOM:', error);
     return null;
   }
 }
@@ -1337,11 +1361,9 @@ function getFiberRootFromElement(element: Element): FiberRoot | null {
 
   // Strategy 1: React 18 createRoot - root element has __reactContainer$xxx
   // This is the HostRoot fiber directly
-  const containerKey = keys.find((k) => k.startsWith("__reactContainer$"));
+  const containerKey = keys.find((k) => k.startsWith('__reactContainer$'));
   if (containerKey) {
-    const hostRootFiber = (element as unknown as Record<string, Fiber>)[
-      containerKey
-    ];
+    const hostRootFiber = (element as unknown as Record<string, Fiber>)[containerKey];
     if (hostRootFiber?.stateNode) {
       return hostRootFiber.stateNode as FiberRoot;
     }
@@ -1349,8 +1371,7 @@ function getFiberRootFromElement(element: Element): FiberRoot | null {
 
   // Strategy 2: React 18 child elements or React 16/17 - __reactFiber$ / __reactInternalInstance$
   const fiberKey = keys.find(
-    (k) =>
-      k.startsWith("__reactFiber$") || k.startsWith("__reactInternalInstance$"),
+    (k) => k.startsWith('__reactFiber$') || k.startsWith('__reactInternalInstance$'),
   );
   if (fiberKey) {
     const fiber = (element as unknown as Record<string, Fiber>)[fiberKey];
@@ -1405,7 +1426,7 @@ function adaptSnapshotInterval(nodeCount: number): void {
  */
 function executeSnapshot(root: FiberRoot): void {
   if (isWalking) {
-    debugLog("[FloTrace] Skipped snapshot: already walking");
+    debugLog('[FloTrace] Skipped snapshot: already walking');
     return;
   }
   isWalking = true;
@@ -1413,7 +1434,7 @@ function executeSnapshot(root: FiberRoot): void {
   try {
     const tree = buildTreeFromFiberRoot(root);
     if (!tree) {
-      console.warn("[FloTrace] buildTreeFromFiberRoot returned null");
+      console.warn('[FloTrace] buildTreeFromFiberRoot returned null');
       return;
     }
 
@@ -1424,32 +1445,29 @@ function executeSnapshot(root: FiberRoot): void {
 
     const client = getWebSocketClient();
     if (!client.connected) {
-      console.warn(
-        "[FloTrace] WebSocket not connected, cannot send tree snapshot",
-      );
+      console.warn('[FloTrace] WebSocket not connected, cannot send tree snapshot');
       return;
     }
 
     const currentFlatTree = flattenTree(tree);
 
     // Full snapshot when: first time, forced reset, or every Nth snapshot to prevent drift
-    const sendFull =
-      previousFlatTree === null ||
-      snapshotCounter % FULL_SNAPSHOT_INTERVAL === 0;
+    const sendFull = previousFlatTree === null || snapshotCounter % FULL_SNAPSHOT_INTERVAL === 0;
 
     if (sendFull) {
       debugLog(
-        "[FloTrace] Sending FULL tree snapshot, root:",
+        '[FloTrace] Sending FULL tree snapshot, root:',
         tree.name,
-        "nodes:",
+        'nodes:',
         nodeCount,
-        "seq:", snapshotCounter,
-        "nextInterval:",
-        snapshotIntervalMs + "ms",
+        'seq:',
+        snapshotCounter,
+        'nextInterval:',
+        snapshotIntervalMs + 'ms',
       );
       logTreeSnapshot(tree, `send seq=${snapshotCounter}`);
       client.sendImmediate({
-        type: "runtime:treeSnapshot",
+        type: 'runtime:treeSnapshot',
         tree,
         timestamp: Date.now(),
       });
@@ -1459,15 +1477,18 @@ function executeSnapshot(root: FiberRoot): void {
       const diff = computeTreeDiff(previousFlatTree!, currentFlatTree);
       if (diff) {
         debugLog(
-          "[FloTrace] Sending tree diff, seq:",
+          '[FloTrace] Sending tree diff, seq:',
           diffSeq,
-          "added:", diff.added.length,
-          "removed:", diff.removed.length,
-          "updated:", diff.updated.length,
+          'added:',
+          diff.added.length,
+          'removed:',
+          diff.removed.length,
+          'updated:',
+          diff.updated.length,
         );
         logTreeSummary(tree, `diff seq=${diffSeq}`);
         client.sendImmediate({
-          type: "runtime:treeDiff",
+          type: 'runtime:treeDiff',
           seq: diffSeq,
           added: diff.added,
           removed: diff.removed,
@@ -1477,7 +1498,7 @@ function executeSnapshot(root: FiberRoot): void {
         lastSnapshotSentTime = Date.now();
         diffSeq++;
       } else {
-        debugLog("[FloTrace] Tree unchanged, skipping diff");
+        debugLog('[FloTrace] Tree unchanged, skipping diff');
       }
     }
 
@@ -1495,7 +1516,9 @@ function executeSnapshot(root: FiberRoot): void {
             hookIndex: corr.hookIndex,
             timestamp: now,
           });
-        } catch { /* best-effort */ }
+        } catch {
+          /* best-effort */
+        }
       }
     }
 
@@ -1508,7 +1531,7 @@ function executeSnapshot(root: FiberRoot): void {
     maybeEmitNextjsContext(client);
     snapshotCounter++;
   } catch (error) {
-    console.error("[FloTrace] Error walking fiber tree:", error);
+    console.error('[FloTrace] Error walking fiber tree:', error);
   } finally {
     isWalking = false;
   }
@@ -1555,7 +1578,7 @@ function scheduleSnapshot(root: FiberRoot): void {
         clearTimeout(throttleTimer);
         throttleTimer = null;
       }
-      debugLog("[FloTrace] MaxWait forced snapshot (rapid commits detected)");
+      debugLog('[FloTrace] MaxWait forced snapshot (rapid commits detected)');
       if (cachedFiberRoot) {
         executeSnapshot(cachedFiberRoot);
       }
@@ -1582,7 +1605,10 @@ const FULL_SNAPSHOT_INTERVAL = 10; // Send full snapshot every 10th to resync
  * Flatten a tree into a Map<id, node> for O(1) lookups during diff computation.
  * Does NOT include children in the map values (the map is keyed by node.id only).
  */
-function flattenTree(root: LiveTreeNode, out: Map<string, LiveTreeNode> = new Map()): Map<string, LiveTreeNode> {
+function flattenTree(
+  root: LiveTreeNode,
+  out: Map<string, LiveTreeNode> = new Map(),
+): Map<string, LiveTreeNode> {
   out.set(root.id, root);
   for (const child of root.children) {
     flattenTree(child, out);
@@ -1612,11 +1638,13 @@ function getParentId(nodeId: string): string {
 function computeTreeDiff(
   prev: Map<string, LiveTreeNode>,
   curr: Map<string, LiveTreeNode>,
-): RuntimeTreeDiffMessage['added'] extends Array<infer _> ? {
-  added: Array<LiveTreeNode & { parentId: string }>;
-  removed: string[];
-  updated: RuntimeTreeDiffMessage['updated'];
-} | null : never {
+): RuntimeTreeDiffMessage['added'] extends Array<infer _>
+  ? {
+      added: Array<LiveTreeNode & { parentId: string }>;
+      removed: string[];
+      updated: RuntimeTreeDiffMessage['updated'];
+    } | null
+  : never {
   const added: Array<LiveTreeNode & { parentId: string }> = [];
   const removed: string[] = [];
   const updated: RuntimeTreeDiffMessage['updated'] = [];
@@ -1680,10 +1708,10 @@ export function requestTreeSnapshot(): void {
 
   // If using DevTools hook strategy AND it's been sending snapshots recently, skip.
   // Otherwise fall through to DOM fallback (React 19 compat safety net).
-  if (activeStrategy === "devtools") {
+  if (activeStrategy === 'devtools') {
     const elapsed = Date.now() - lastSnapshotSentTime;
     if (elapsed < DEVTOOLS_STALE_THRESHOLD_MS) return;
-    debugLog("[FloTrace] DevTools hook stale (" + elapsed + "ms), falling back to DOM snapshot");
+    debugLog('[FloTrace] DevTools hook stale (' + elapsed + 'ms), falling back to DOM snapshot');
   }
 
   // DOM fallback: find the fiber root from DOM elements
@@ -1719,18 +1747,14 @@ export function requestFullSnapshot(): void {
  *
  * @returns Cleanup function to uninstall
  */
-export function installFiberTreeWalker(
-  options: FiberTreeWalkerOptions = {},
-): () => void {
+export function installFiberTreeWalker(options: FiberTreeWalkerOptions = {}): () => void {
   if (isInstalled) {
-    console.warn("[FloTrace] Fiber tree walker already installed");
+    console.warn('[FloTrace] Fiber tree walker already installed');
     return () => uninstallFiberTreeWalker();
   }
 
-  if (typeof window === "undefined") {
-    console.warn(
-      "[FloTrace] Not in browser environment, cannot install fiber tree walker",
-    );
+  if (typeof window === 'undefined') {
+    console.warn('[FloTrace] Not in browser environment, cannot install fiber tree walker');
     return () => {};
   }
 
@@ -1761,23 +1785,16 @@ export function installFiberTreeWalker(
 
   // Strategy 1: Try DevTools hook
   const hook = (globalThis as DevToolsHookGlobal).__REACT_DEVTOOLS_GLOBAL_HOOK__;
-  if (hook && typeof hook.onCommitFiberRoot === "function") {
+  if (hook && typeof hook.onCommitFiberRoot === 'function') {
     originalOnCommitFiberRoot = hook.onCommitFiberRoot;
 
-    hook.onCommitFiberRoot = (
-      rendererID: number,
-      root: FiberRoot,
-      priority?: number,
-    ) => {
+    hook.onCommitFiberRoot = (rendererID: number, root: FiberRoot, priority?: number) => {
       // Call original handler first (React DevTools)
       if (originalOnCommitFiberRoot) {
         try {
           originalOnCommitFiberRoot(rendererID, root, priority);
         } catch (error) {
-          console.error(
-            "[FloTrace] Error in original onCommitFiberRoot:",
-            error,
-          );
+          console.error('[FloTrace] Error in original onCommitFiberRoot:', error);
         }
       }
 
@@ -1821,10 +1838,8 @@ export function installFiberTreeWalker(
       scheduleSnapshot(root);
     };
 
-    activeStrategy = "devtools";
-    console.log(
-      "[FloTrace] Fiber tree walker installed (DevTools hook strategy)",
-    );
+    activeStrategy = 'devtools';
+    console.log('[FloTrace] Fiber tree walker installed (DevTools hook strategy)');
 
     // Send an initial snapshot via DOM fallback (don't wait for next React commit)
     setTimeout(() => {
@@ -1839,10 +1854,8 @@ export function installFiberTreeWalker(
     }, 100);
   } else {
     // Strategy 2: DOM fallback - snapshots are triggered by requestTreeSnapshot()
-    activeStrategy = "dom";
-    console.log(
-      "[FloTrace] Fiber tree walker installed (DOM fallback strategy)",
-    );
+    activeStrategy = 'dom';
+    console.log('[FloTrace] Fiber tree walker installed (DOM fallback strategy)');
 
     // Send an initial snapshot immediately by finding the fiber root from DOM
     setTimeout(() => {
@@ -1942,10 +1955,7 @@ function diffProps(
  * Walk two memoizedState linked lists in parallel, comparing by reference.
  * Returns indices of hooks whose memoizedState changed.
  */
-function diffHookStates(
-  prev: FiberHookState | null,
-  next: FiberHookState | null,
-): number[] {
+function diffHookStates(prev: FiberHookState | null, next: FiberHookState | null): number[] {
   const changed: number[] = [];
   let prevHook = prev;
   let nextHook = next;
@@ -2061,7 +2071,7 @@ export function uninstallFiberTreeWalker(): void {
   cachedFiberRoot = null;
 
   // Restore DevTools hook if we wrapped it
-  if (activeStrategy === "devtools") {
+  if (activeStrategy === 'devtools') {
     const hook = (globalThis as DevToolsHookGlobal).__REACT_DEVTOOLS_GLOBAL_HOOK__;
     if (hook) {
       if (originalOnCommitFiberRoot) {
@@ -2083,8 +2093,12 @@ export function uninstallFiberTreeWalker(): void {
   isInstalled = false;
   walkerOptions = {};
   walkerFilterConfig = defaultFilterConfig();
-  try { uninstallRscPayloadInterceptor(); } catch { /* non-fatal */ }
+  try {
+    uninstallRscPayloadInterceptor();
+  } catch {
+    /* non-fatal */
+  }
   clearActionStateCache();
   resetNextjsDetection();
-  console.log("[FloTrace] Fiber tree walker uninstalled");
+  console.log('[FloTrace] Fiber tree walker uninstalled');
 }

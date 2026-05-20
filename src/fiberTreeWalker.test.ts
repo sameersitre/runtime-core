@@ -12,11 +12,7 @@ const FUNCTION_COMPONENT = 0;
 // Minimal fiber factory — only populates the fields `resolveEffectiveReactKey`
 // (and its dependencies `isUserComponent` / `getComponentName` /
 // `isFrameworkComponent`) actually read.
-function makeFiber(opts: {
-  name: string;
-  key?: string | null;
-  parent?: Fiber | null;
-}): Fiber {
+function makeFiber(opts: { name: string; key?: string | null; parent?: Fiber | null }): Fiber {
   const fn = function () {} as unknown as { displayName?: string };
   fn.displayName = opts.name;
   return {

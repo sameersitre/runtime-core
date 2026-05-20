@@ -53,7 +53,8 @@ export function tagFetchData(obj: unknown, requestId: string, depth = 0): void {
     const limit = Math.min(obj.length, FETCH_ORIGIN_TAG_ARRAY_LIMIT);
     for (let i = 0; i < limit; i++) tagFetchData(obj[i], requestId, depth + 1);
   } else {
-    for (const val of Object.values(obj as Record<string, unknown>)) tagFetchData(val, requestId, depth + 1);
+    for (const val of Object.values(obj as Record<string, unknown>))
+      tagFetchData(val, requestId, depth + 1);
   }
 }
 

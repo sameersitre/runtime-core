@@ -617,8 +617,14 @@ export interface CascadeNode {
 }
 
 export type LanePriority =
-  | 'sync' | 'discrete' | 'continuous' | 'default'
-  | 'transition' | 'deferred' | 'idle' | 'offscreen';
+  | 'sync'
+  | 'discrete'
+  | 'continuous'
+  | 'default'
+  | 'transition'
+  | 'deferred'
+  | 'idle'
+  | 'offscreen';
 
 export interface LaneInfo {
   priority: LanePriority;
@@ -1142,8 +1148,8 @@ export const DEFAULT_CONFIG: ResolvedFloTraceConfig = {
   // for everyone. Production safety is handled by users gating the import via
   // the dynamic-import pattern documented in the runtime READMEs.
   enabled:
-    (globalThis as { process?: { env?: { NODE_ENV?: string } } }).process?.env
-      ?.NODE_ENV !== 'production',
+    (globalThis as { process?: { env?: { NODE_ENV?: string } } }).process?.env?.NODE_ENV !==
+    'production',
   autoReconnect: true,
   reconnectInterval: 2000,
   trackAllRenders: true,
