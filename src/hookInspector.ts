@@ -18,12 +18,7 @@
 import type { Fiber, FiberHookState, FiberEffect } from './fiberTreeWalker';
 import type { HookInfo, HookType, SerializedValue } from './types';
 import { serializeValue } from './serializer';
-import {
-  HOOK_INSERTION,
-  HOOK_LAYOUT,
-  HOOK_PASSIVE,
-  collectCircularList,
-} from './fiberConstants';
+import { HOOK_INSERTION, HOOK_LAYOUT, HOOK_PASSIVE, collectCircularList } from './fiberConstants';
 
 /**
  * Inspect all hooks in a fiber's memoizedState linked list.
