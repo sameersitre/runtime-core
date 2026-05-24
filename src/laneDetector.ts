@@ -70,6 +70,8 @@ export function lanePriorityLabel(priority: LanePriority): string {
       return 'Idle';
     case 'offscreen':
       return 'Offscreen';
+    default:
+      return assertNever(priority);
   }
 }
 
@@ -92,7 +94,13 @@ export function lanePriorityColor(priority: LanePriority): string {
       return '#546E7A'; // dim
     case 'offscreen':
       return '#455A64'; // very dim
+    default:
+      return assertNever(priority);
   }
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unhandled LanePriority variant: ${JSON.stringify(value)}`);
 }
 
 /** Read finishedLanes from the FiberRoot node — the lanes for the just-committed work */
