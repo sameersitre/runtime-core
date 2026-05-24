@@ -18,19 +18,19 @@
  */
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 
+// `logFiberType` isn't re-exported from `index.ts` (intentional — see PR
+// description). Import directly from the module path to exercise it alongside
+// the rest of the surface.
 import {
   __getFiberRecordsForTesting,
   __getTreeRecordsForTesting,
   describeFiberType,
+  logFiberType,
   logTreeSnapshot,
   logTreeSummary,
   setFiberDebug,
 } from './fiberDebugLogger';
 import type { LiveTreeNode } from './types';
-
-// `logFiberType` isn't re-exported from `index.ts` (intentional — see PR
-// description). Import directly from the module path to exercise it.
-import { logFiberType } from './fiberDebugLogger';
 
 // ============================================================================
 // Builders

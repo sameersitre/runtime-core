@@ -320,7 +320,6 @@ declare global {
   }
   // React Native has no `window`; the DevTools hook is attached to `globalThis`.
   // Augment globalThis so the walker can read the hook uniformly across platforms.
-  // eslint-disable-next-line @typescript-eslint/no-empty-object-type
   interface globalThis {
     __REACT_DEVTOOLS_GLOBAL_HOOK__?: DevToolsHook & Record<string, unknown>;
   }
@@ -1755,7 +1754,9 @@ export function installFiberTreeWalker(options: FiberTreeWalkerOptions = {}): ()
 
   if (typeof window === 'undefined') {
     console.warn('[FloTrace] Not in browser environment, cannot install fiber tree walker');
-    return () => {};
+    return () => {
+      /* no-op uninstall: walker was never installed in this environment */
+    };
   }
 
   walkerOptions = options;

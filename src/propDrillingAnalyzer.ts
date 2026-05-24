@@ -385,12 +385,12 @@ function runAnalysis(
       // DFS: collect all root-to-leaf paths
       const allPaths: Array<PathNode[]> = [];
 
-      function dfs(
+      const dfs = (
         currentId: string,
         currentPropKey: string,
         currentPath: PathNode[],
         visited: Set<string>,
-      ): void {
+      ): void => {
         if (visited.has(currentId)) return; // cycle guard
         visited.add(currentId);
 
@@ -414,7 +414,7 @@ function runAnalysis(
           );
         }
         visited.delete(currentId);
-      }
+      };
 
       dfs(
         sourceId,

@@ -187,7 +187,7 @@ function wrapFunctionComponentDispatchers(fiber: FiberMinimal): void {
           const hookType: 'state' | 'reducer' =
             typeof (queue as { lastRenderedReducer?: unknown }).lastRenderedReducer ===
               'function' &&
-            (queue as { lastRenderedReducer?: Function }).lastRenderedReducer
+            (queue as { lastRenderedReducer?: (...args: unknown[]) => unknown }).lastRenderedReducer
               ?.toString()
               .includes('action')
               ? 'reducer'
@@ -239,7 +239,7 @@ function wrapClassComponentInstance(fiber: FiberMinimal): void {
   const fiberId = getFiberId(fiber);
 
   if (typeof instance.setState === 'function') {
-    const origSetState = instance.setState as Function;
+    const origSetState = instance.setState as (...args: unknown[]) => unknown;
     instance.setState = function wrappedSetState(updater: unknown, callback?: unknown) {
       try {
         const stack = captureStack();
@@ -262,7 +262,7 @@ function wrapClassComponentInstance(fiber: FiberMinimal): void {
   }
 
   if (typeof instance.forceUpdate === 'function') {
-    const origForceUpdate = instance.forceUpdate as Function;
+    const origForceUpdate = instance.forceUpdate as (...args: unknown[]) => unknown;
     instance.forceUpdate = function wrappedForceUpdate(callback?: unknown) {
       try {
         const stack = captureStack();
