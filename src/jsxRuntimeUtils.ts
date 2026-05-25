@@ -91,6 +91,101 @@ export function normalizeJsxSourcePath(fileName: string): string {
 }
 
 /**
+ * Normalize a file path extracted from a JS engine stack frame (V8 / Hermes).
+ * Stack frames in dev mode carry dev-server URLs ("http://localhost:5173/src/Foo.tsx?t=1234")
+ * or RN Metro bundle URLs ("http://10.0.2.2:8081/index.bundle?platform=android&dev=true").
+ *
+ * Steps (order matters):
+ *   1. Strip the URL query string (`?t=...`, `?platform=...`).
+ *   2. If the path is an http(s) URL, strip the scheme + host[:port] and the
+ *      leading `/` — the result is a project-relative path that the desktop
+ *      can resolve against the active project root.
+ *   3. Delegate to `normalizeJsxSourcePath` for `file://`, `webpack-internal:`,
+ *      Turbopack `[project]/`, and Windows drive normalizations.
+ */
+export function normalizeStackFramePath(rawPath: string): string {
+  let p = rawPath;
+  const queryIdx = p.indexOf('?');
+  if (queryIdx !== -1) p = p.slice(0, queryIdx);
+  const httpMatch = p.match(/^https?:\/\/[^/]+(\/.+)$/);
+  if (httpMatch) {
+    p = httpMatch[1];
+    if (p.startsWith('/')) p = p.slice(1);
+  }
+  return normalizeJsxSourcePath(p);
+}
+
+/**
+ * Heuristic: does this stack-frame path point at a JS bundle file rather than
+ * a real source file? Used to skip Metro/Webpack/Vite bundle frames in the
+ * `_debugStack` fallback — the bundle line number is meaningless without
+ * source maps, and the bundle URL isn't a path the desktop can open.
+ *
+ *   - Metro: `http://10.0.2.2:8081/index.bundle?platform=android&...`
+ *   - Generic: `<anything>/bundle.js` or `<anything>.bundle` or `.bundle.js`
+ *   - Metro platform query (defensive — covers source-map-disabled bundles
+ *     that don't include `index.bundle` in the URL path)
+ */
+export function isJsBundlePath(rawPath: string): boolean {
+  if (/\bindex\.bundle\b/.test(rawPath)) return true;
+  if (/\.bundle(\?|$|\.js(\?|$))/.test(rawPath)) return true;
+  if (/\?platform=(ios|android|web|native)\b/.test(rawPath)) return true;
+  return false;
+}
+
+/**
+ * Parse the first V8/Hermes stack frame that is NOT inside React/RN internals
+ * and NOT a JS bundle URL. Returns the file path AND line/column so callers
+ * that need full position (LiveTreeNode click-to-IDE on React 19+ web) get
+ * them, not just the path.
+ *
+ * Lives here (not in `fiberTreeWalker.ts`) so `isUserComponent` below — which
+ * also needs to detect "this fiber's source is outside node_modules" — can
+ * reach it without creating a circular dependency with the walker.
+ *
+ * Frame formats handled:
+ *   "    at Component (file:///path/file.tsx:10:5)"        — V8 (Node, Chrome)
+ *   "    at fn (webpack-internal:///./src/Foo.tsx:10:5)"   — Webpack dev
+ *   "    at fn (http://localhost:3000/_next/...:10:5)"     — Next.js Turbopack
+ *   "Component@/path/to/file.tsx:10:5"                     — Hermes (RN)
+ *
+ * Skipped:
+ *   - React internal frames (`react-dom`, `/react/cjs/`, `/scheduler/`,
+ *     `react-native/Libraries`)
+ *   - JS bundle URLs (`isJsBundlePath` matches Metro `index.bundle?...` etc.)
+ */
+export function parseFirstNonReactFrame(
+  stack: string,
+): { fileName: string; lineNumber: number; columnNumber: number } | null {
+  const lines = stack.split('\n');
+  for (const line of lines) {
+    // V8: "(path:line:col)"; Hermes: "@path:line:col"
+    const parened = line.match(/\(([^)]+):(\d+):(\d+)\)/);
+    const hermes = line.match(/@([^\s]+):(\d+):(\d+)$/);
+    const match = parened ?? hermes;
+    if (!match) continue;
+    const path = match[1];
+    if (path.includes('react-dom')) continue;
+    if (path.includes('react-native/Libraries')) continue;
+    if (path.includes('/react/cjs/')) continue;
+    if (path.includes('/scheduler/')) continue;
+    // RN Metro / Webpack bundle frames are not openable in an IDE — the path
+    // is a dev-server URL and the line number is bundle-relative, not
+    // source-relative. Skip and keep looking (in practice no source frame
+    // follows in RN dev — `_debugStack` will degrade to "no signal", same as
+    // pre-fix behaviour, instead of populating a garbage filePath that the
+    // desktop's editor IPC then rejects with "File not found on disk").
+    if (isJsBundlePath(path)) continue;
+    return {
+      fileName: normalizeStackFramePath(path),
+      lineNumber: Number(match[2]),
+      columnNumber: Number(match[3]),
+    };
+  }
+  return null;
+}
+
+/**
  * FNV-1a 32-bit hash → 8-char hex string. Fast, stable, and sufficient for
  * a non-cryptographic per-callsite identity. Operates on the NORMALIZED path
  * so the same source line produces the same hash regardless of bundler.
@@ -113,40 +208,219 @@ export function computeCallSiteId(source: JsxSourceArg): string {
 }
 
 /**
- * Read the JSX-runtime source attribution off a fiber's memoized props. Set
- * by the optional `@flotrace/runtime-core/jsx-dev-runtime` opt-in via a
- * symbol-keyed prop that survives React's prop pipeline but doesn't appear
- * in `Object.keys` / React unknown-DOM-prop warnings.
+ * String-keyed JSX attribute name used by `@flotrace/runtime-core/babel-plugin`.
+ * Kept here so the babel plugin (CJS) and the walker (ESM/TS) read from a
+ * single source of truth — typo'ing one half would silently break click-to-IDE.
  *
- * Returns `undefined` when the user hasn't opted in OR the fiber was created
- * by a path that bypasses jsxDEV (classic runtime, SSR-hydrated fiber,
- * `React.createElement` direct call inside a vendored dep). Caller falls
- * back to the existing heuristic ladder.
+ * `data-*` is intentional: valid on every React DOM host element (no
+ * unknown-prop warning) and silently ignored by RN's native renderer.
+ */
+export const FLOTRACE_SRC_ATTR = 'data-flotrace-src';
+
+/**
+ * Parse the JSON payload written by the babel plugin (`{f,l,c}` keys for
+ * size) into the canonical `FlotraceJsxSource` shape. Computes `callSiteId`
+ * at read time so the plugin payload stays minimal AND every consumer agrees
+ * on the hash (the FNV-1a is in this file too).
  *
- * Validation: only the shape we care about (`fileName`/`lineNumber`/
- * `columnNumber`/`callSiteId` all strings/numbers). Defensive against a
- * malformed `Symbol.for('flotrace.source')` collision from unrelated tooling.
+ * Returns `undefined` for any malformed payload — the walker treats this
+ * the same as "no source signal" and falls back through the tier ladder.
+ */
+function parseDataFlotraceSrc(value: string): FlotraceJsxSource | undefined {
+  let obj: unknown;
+  try {
+    obj = JSON.parse(value);
+  } catch {
+    return undefined;
+  }
+  if (!obj || typeof obj !== 'object') return undefined;
+  const o = obj as Record<string, unknown>;
+  if (typeof o.f !== 'string' || typeof o.l !== 'number' || typeof o.c !== 'number') {
+    return undefined;
+  }
+  const fileName = o.f;
+  const lineNumber = o.l;
+  const columnNumber = o.c;
+  return {
+    fileName,
+    lineNumber,
+    columnNumber,
+    callSiteId: computeCallSiteId({ fileName, lineNumber, columnNumber }),
+  };
+}
+
+/**
+ * Read the JSX-runtime source attribution off a fiber. Three routes,
+ * checked in order:
+ *
+ *   1. `memoizedProps[FLOTRACE_SOURCE]` — symbol-keyed payload from the
+ *      optional `@flotrace/runtime-core/jsx-dev-runtime` JSX-runtime
+ *      opt-in. Highest precision (carries the precomputed callSiteId and
+ *      any inline-literal diagnostics). Caveat: React 19 strips symbol-
+ *      keyed entries on any element with a `key` prop (list rows, .map()
+ *      children) — those fall through to routes 2/3.
+ *
+ *   2. `memoizedProps[FLOTRACE_SRC_ATTR]` — string-keyed JSON payload from
+ *      the `@flotrace/runtime-core/babel-plugin` JSX-attribute pass. This
+ *      is the "call site" attribution — points at where `<Component />`
+ *      was *written*. Survives React 19's keyed-element clone, coexists
+ *      with any other `jsxImportSource` consumer (nativewind etc.).
+ *
+ *   3. `type[FLOTRACE_SRC_ATTR]` — string-keyed JSON payload from the
+ *      same babel plugin's declaration-tagging pass. This is the
+ *      "definition site" attribution — points at the `function Component`
+ *      / `const Component = ...` declaration. Covers fibers whose
+ *      memoizedProps lacks the attribute, i.e. components instantiated
+ *      via `React.createElement(Component, ...)` from inside a library
+ *      (react-navigation `<Stack.Screen component={X}>`, HOC-wrapped
+ *      components, AppRegistry-registered roots).
+ *
+ * Returns `undefined` if no route yields a valid payload. Caller falls
+ * back to the existing heuristic ladder (`_debugSource` → owner chain →
+ * `_debugStack`).
+ *
+ * Validation is strict: missing fields or wrong types → `undefined`, never
+ * a partially-populated object. Defensive against a malformed symbol-key
+ * collision from unrelated tooling.
  *
  * Generic over the fiber-like shape — works for both the full `Fiber` type
  * in `fiberTreeWalker.ts` and the minimal subset used by `cascadeAnalyzer.ts`.
+ * `type` is optional so legacy callers that pass only `{memoizedProps}`
+ * keep working (they just skip route 3).
  */
 export function readJsxSourceFromFiber(fiber: {
   memoizedProps: Record<string, unknown> | null;
+  type?: unknown;
 }): FlotraceJsxSource | undefined {
   const props = fiber.memoizedProps;
-  if (!props) return undefined;
-  const raw = (props as Record<string | symbol, unknown>)[FLOTRACE_SOURCE];
-  if (!raw || typeof raw !== 'object') return undefined;
-  const obj = raw as Record<string, unknown>;
-  if (
-    typeof obj.fileName !== 'string' ||
-    typeof obj.lineNumber !== 'number' ||
-    typeof obj.columnNumber !== 'number' ||
-    typeof obj.callSiteId !== 'string'
-  ) {
-    return undefined;
+
+  if (props) {
+    // Route 1: symbol-keyed payload (JSX-runtime opt-in)
+    const symRaw = (props as Record<string | symbol, unknown>)[FLOTRACE_SOURCE];
+    if (symRaw && typeof symRaw === 'object') {
+      const obj = symRaw as Record<string, unknown>;
+      if (
+        typeof obj.fileName === 'string' &&
+        typeof obj.lineNumber === 'number' &&
+        typeof obj.columnNumber === 'number' &&
+        typeof obj.callSiteId === 'string'
+      ) {
+        return symRaw as FlotraceJsxSource;
+      }
+    }
+
+    // Route 2: string-keyed JSON payload on props (babel plugin call-site
+    // attribution) — the recommended path for nativewind / RN consumers,
+    // and the only one that survives React 19's keyed-element prop clone.
+    const strRaw = (props as Record<string, unknown>)[FLOTRACE_SRC_ATTR];
+    if (typeof strRaw === 'string') {
+      const parsed = parseDataFlotraceSrc(strRaw);
+      if (parsed) return parsed;
+    }
   }
-  return raw as FlotraceJsxSource;
+
+  // Route 3: string-keyed JSON payload on the component TYPE (babel plugin
+  // definition-site attribution). Covers fibers whose props lack the
+  // attribute — e.g. react-navigation screens, HOC-wrapped components.
+  // Host components have a string type (e.g. 'View'), which can't carry
+  // properties — guard against that here.
+  const type = fiber.type;
+  if (type !== null && (typeof type === 'function' || typeof type === 'object')) {
+    const typeAttr = (type as Record<string, unknown>)[FLOTRACE_SRC_ATTR];
+    if (typeof typeAttr === 'string') {
+      const parsed = parseDataFlotraceSrc(typeAttr);
+      if (parsed) return parsed;
+    }
+  }
+
+  return undefined;
+}
+
+/**
+ * Top-priority "is this fiber a user-defined component?" check.
+ *
+ * Three routes, checked in order of precision (fastest + most reliable
+ * first). Returns `true` as soon as ANY route produces positive evidence
+ * that the fiber's source code lives outside `node_modules`.
+ *
+ *   Route A — `fiber.type[FLOTRACE_SRC_ATTR]` (babel plugin):
+ *     The `@flotrace/runtime-core/babel-plugin` declaration-tagging pass
+ *     writes a JSON `{f,l,c}` payload onto every PascalCase function /
+ *     class / variable in user code. Works for: React Native (Babel),
+ *     Vite + React (Babel), CRA, Webpack + Babel, Next.js Pages Router
+ *     (if Babel is opted in). Doesn't work for: Next.js with SWC.
+ *
+ *   Route B — `fiber._debugSource.fileName` (React 18 + Babel JSX source):
+ *     The `@babel/plugin-transform-react-jsx-source` plugin (auto-included
+ *     by RN's preset and CRA/Vite's React preset) injects `__source` on
+ *     every JSX element, which React 18 captures onto `fiber._debugSource`.
+ *     Empty under React 19+ (the field was deprecated upstream).
+ *
+ *   Route C — `fiber._debugStack.stack` (React 19+ web — Next.js SWC, Vite):
+ *     React 19 replaced `_debugSource` with an Error captured at JSX
+ *     creation time. We parse the first non-React stack frame for a path.
+ *     This is what makes Next.js (SWC, no babel config possible without
+ *     losing SWC) work — the React 19 reconciler attaches stack-frame
+ *     info regardless of the compiler used.
+ *
+ * For ALL routes the "is user code" criterion is the same: the resolved
+ * file path must not include `node_modules`. That string check is enough
+ * because every modern bundler resolves third-party deps through a path
+ * containing `/node_modules/` — there's no realistic false-negative.
+ *
+ * Returns `false` for:
+ *   - Host components (string `fiber.type` like `'View'` / `'div'`)
+ *   - Library / framework components (paths in `node_modules`, plus
+ *     bundle-URL frames which are skipped by `parseFirstNonReactFrame`)
+ *   - Fibers with no source signal at all (degrade to existing heuristics)
+ *
+ * Used by `fiberTreeWalker.ts` as a top-priority short-circuit before
+ * name-list / regex / path heuristics fire. A fiber that returns `true`
+ * here is authoritatively user code — every framework/library
+ * classification downstream should bypass.
+ *
+ * Generic over the fiber-like shape so cascadeAnalyzer / propDrillingAnalyzer
+ * / valueTraceResolver can all share one definition without importing the
+ * walker's `Fiber` type.
+ */
+export function isUserComponent(fiber: {
+  type?: unknown;
+  memoizedProps?: Record<string, unknown> | null;
+  _debugSource?: { fileName: string; lineNumber?: number } | null;
+  _debugStack?: { stack?: string } | null;
+}): boolean {
+  // Routes 1-3 — JSX-runtime opt-in symbol on memoizedProps, babel-plugin
+  // string attr on memoizedProps, and babel-plugin string attr on fiber.type.
+  // All three are read by `readJsxSourceFromFiber`. Critical: the Next.js +
+  // SWC + `jsxImportSource: '@flotrace/runtime-core'` path hits Route 1
+  // (memoizedProps[FLOTRACE_SOURCE]) — without delegating here, Next.js
+  // tsconfig-only consumers would fall through to the much slower stack
+  // parse below.
+  const jsxSrc = readJsxSourceFromFiber({
+    memoizedProps: fiber.memoizedProps ?? null,
+    type: fiber.type,
+  });
+  if (jsxSrc && !jsxSrc.fileName.includes('node_modules')) return true;
+
+  // Route B — React 18's `_debugSource` (auto-populated by the Babel JSX
+  // source plugin in any dev build using Babel).
+  const debugSourcePath = fiber._debugSource?.fileName;
+  if (typeof debugSourcePath === 'string' && !debugSourcePath.includes('node_modules')) {
+    return true;
+  }
+
+  // Route C — React 19's `_debugStack` (the fallback signal when neither
+  // the JSX-runtime opt-in nor the babel plugin is installed, e.g. plain
+  // Vite + React 19 with no config changes). `parseFirstNonReactFrame`
+  // skips React internals AND JS bundle URLs (so RN Metro bundle frames
+  // don't false-positive a user path), then normalizes the result.
+  const stack = fiber._debugStack?.stack;
+  if (typeof stack === 'string') {
+    const frame = parseFirstNonReactFrame(stack);
+    if (frame && !frame.fileName.includes('node_modules')) return true;
+  }
+
+  return false;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

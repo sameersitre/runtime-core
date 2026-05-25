@@ -20,11 +20,17 @@
       "types": "./dist/jsx-dev-runtime.d.ts",
       "import": "./dist/jsx-dev-runtime.mjs",
       "require": "./dist/jsx-dev-runtime.js"
+    },
+    "./babel-plugin": {
+      "types": "./babel-plugin.d.ts",
+      "default": "./babel-plugin.js"
     }
   },
   "sideEffects": false,
   "files": [
     "dist",
+    "babel-plugin.js",
+    "babel-plugin.d.ts",
     "LICENSE",
     "README.md"
   ],

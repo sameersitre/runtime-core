@@ -43,6 +43,11 @@ export {
   // (callSiteMetrics) + duplicate-key emitter registration.
   computeCallSiteMetricsPayload,
   setDuplicateKeyEmitter,
+  // Top-priority user-component detector built on the babel-plugin
+  // declaration-site signal. Used as a short-circuit before name/path
+  // heuristics in `fiberTreeWalker`; also shared with cascadeAnalyzer +
+  // propDrillingAnalyzer + valueTraceResolver via this barrel.
+  isUserComponent,
 } from './jsxRuntimeUtils';
 export type { DuplicateKeyEvent } from './jsxRuntimeUtils';
 

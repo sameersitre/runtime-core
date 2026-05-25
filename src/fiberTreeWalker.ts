@@ -22,7 +22,12 @@ import type {
   EffectInfo,
   SourceConfidence,
 } from './types';
-import { readJsxSourceFromFiber, type FlotraceJsxSource } from './jsxRuntimeUtils';
+import {
+  readJsxSourceFromFiber,
+  isUserComponent,
+  parseFirstNonReactFrame,
+  type FlotraceJsxSource,
+} from './jsxRuntimeUtils';
 import { serializeValue, serializeProps } from './serializer';
 import { getWebSocketClient } from './websocketClient';
 import { inspectHooks } from './hookInspector';
@@ -527,10 +532,19 @@ function getComponentName(fiber: Fiber): string {
 }
 
 /**
- * Check if a fiber represents a user-defined component (not a library/framework internal).
- * Uses _debugSource (available in dev mode) as primary heuristic, with name-based fallback.
+ * Heuristic "likely user-defined component" check — fiber-tag gate plus name +
+ * `_debugSource` + host-prefix filters. Returns `true` when nothing OBVIOUSLY
+ * marks this fiber as framework/library/host. Authoritative user-code proof
+ * comes from `isUserComponent` (imported from `jsxRuntimeUtils`), which
+ * reads the babel-plugin declaration-site tag.
+ *
+ * Renamed from `isUserComponent` to avoid colliding with the imported helper.
+ * The two are layered: this is a coarse heuristic filter applied to every
+ * fiber walk; the imported `isUserComponent` is a top-priority short-circuit
+ * used by `isFrameworkComponent`/`detectLibraryName`/`resolveSourceConfidence`
+ * to override mis-classifications when the plugin signal is present.
  */
-function isUserComponent(fiber: Fiber): boolean {
+function isLikelyUserComponent(fiber: Fiber): boolean {
   if (!USER_COMPONENT_TAGS.has(fiber.tag)) return false;
 
   const name = getComponentName(fiber);
@@ -577,7 +591,7 @@ function isUserComponent(fiber: Fiber): boolean {
 
 /**
  * Known framework/library wrapper component names.
- * These pass isUserComponent() but are framework internals users typically don't want to see.
+ * These pass isLikelyUserComponent() but are framework internals users typically don't want to see.
  *
  * React 19 notes:
  * - <Activity> replaces the old <Offscreen> experimental primitive
@@ -663,27 +677,53 @@ const FRAMEWORK_PATH_PATTERNS: RegExp[] = [
 
 /**
  * Detect if a user-visible component is actually a framework/library wrapper.
- * Called only for fibers that already passed isUserComponent().
+ * Called only for fibers that already passed isLikelyUserComponent().
  *
  * Platform adapters can inject extra names/patterns via
  * `installFiberTreeWalker({ frameworkComponentNames, frameworkPathPatterns })`.
  */
 /**
- * Resolve the most useful source-file path for a fiber, trying evidence
- * sources in priority order:
- *   1. `fiber.memoizedProps[FLOTRACE_SOURCE].fileName` — JSX-runtime opt-in
- *      (highest confidence; columnNumber also available)
- *   2. `fiber._debugSource.fileName` — React 17/18 + early 19 (Babel JSX plugin)
- *   3. `fiber._debugOwner` chain (3-hop) — enriches wrappers that don't carry
- *      `_debugSource` themselves but are rendered by user code that does
- *   4. `fiber._debugStack.stack` first non-react frame — React 19.1+ replaces
- *      `_debugSource` with an Error object captured at JSX-creation time
+ * Resolved location for a fiber: file path plus (when available) line/column.
+ *
+ * `lineNumber` / `columnNumber` are optional because the owner-chain tier only
+ * yields a path (the wrapper's call site isn't the fiber's own — copying its
+ * line would land click-to-IDE on the wrong file).
  */
-function resolveEffectiveSourcePath(fiber: Fiber): string | null {
-  const jsxSrc = readJsxSourceFromFiber(fiber);
-  if (jsxSrc) return jsxSrc.fileName;
+type EffectiveSourceLocation = {
+  fileName: string;
+  lineNumber?: number;
+  columnNumber?: number;
+};
 
-  if (fiber._debugSource?.fileName) return fiber._debugSource.fileName;
+/**
+ * Resolve the most useful source location for a fiber, trying evidence
+ * sources in priority order:
+ *   1. `fiber.memoizedProps[FLOTRACE_SOURCE]` — JSX-runtime opt-in
+ *      (highest confidence; full {fileName, lineNumber, columnNumber})
+ *   2. `fiber._debugSource` — React 17/18 + early 19 (Babel JSX plugin)
+ *   3. `fiber._debugOwner` chain (3-hop) — enriches wrappers that don't carry
+ *      `_debugSource` themselves but are rendered by user code that does.
+ *      Path-only — the wrapper's own line is not its caller's line.
+ *   4. `fiber._debugStack.stack` first non-react frame — React 19.1+ replaces
+ *      `_debugSource` with an Error object captured at JSX-creation time.
+ *      Carries line/column.
+ */
+function resolveEffectiveSourceLocation(fiber: Fiber): EffectiveSourceLocation | null {
+  const jsxSrc = readJsxSourceFromFiber(fiber);
+  if (jsxSrc) {
+    return {
+      fileName: jsxSrc.fileName,
+      lineNumber: jsxSrc.lineNumber,
+      columnNumber: jsxSrc.columnNumber,
+    };
+  }
+
+  if (fiber._debugSource?.fileName) {
+    return {
+      fileName: fiber._debugSource.fileName,
+      lineNumber: fiber._debugSource.lineNumber,
+    };
+  }
 
   const ownerHit = walkAncestors<string>(
     fiber._debugOwner ?? null,
@@ -691,7 +731,7 @@ function resolveEffectiveSourcePath(fiber: Fiber): string | null {
     (f) => f._debugOwner ?? null,
     (cur) => cur._debugSource?.fileName ?? undefined,
   );
-  if (ownerHit) return ownerHit;
+  if (ownerHit) return { fileName: ownerHit };
 
   const stack = fiber._debugStack?.stack;
   if (typeof stack === 'string') {
@@ -700,6 +740,16 @@ function resolveEffectiveSourcePath(fiber: Fiber): string | null {
   }
 
   return null;
+}
+
+/**
+ * Path-only convenience wrapper for callers that only need the file name
+ * (framework/library detection, confidence tier). New code should prefer
+ * `resolveEffectiveSourceLocation` so click-to-IDE can land on the exact
+ * line under React 19.
+ */
+function resolveEffectiveSourcePath(fiber: Fiber): string | null {
+  return resolveEffectiveSourceLocation(fiber)?.fileName ?? null;
 }
 
 /**
@@ -721,6 +771,12 @@ function resolveSourceConfidence(
   isLibrary: boolean,
   precomputedJsxSource?: FlotraceJsxSource | undefined,
 ): SourceConfidence {
+  // Top-priority signal: the babel plugin's declaration-site tag on
+  // `fiber.type` is authoritative proof of user code. Override the
+  // `isFramework || isLibrary → 'package'` shortcut when present so a user
+  // component sharing a name with a framework wrapper still surfaces as
+  // `'exact'` (no `fw`/`lib` badge in the inspector).
+  if (isUserComponent(fiber)) return 'exact';
   if (isFramework || isLibrary) return 'package';
   const jsxSrc = precomputedJsxSource ?? readJsxSourceFromFiber(fiber);
   if (jsxSrc) return 'exact';
@@ -760,31 +816,14 @@ function walkAncestors<T>(
   return undefined;
 }
 
-/**
- * Parse the first V8/Hermes stack frame that is NOT inside React/RN internals.
- * Frame formats handled:
- *   "    at Component (file:///path/file.tsx:10:5)"
- *   "    at http://localhost:8081/index.bundle?... (file:///path:10:5)"
- *   "Component@/path/to/file.tsx:10:5"  (Hermes)
- */
-function parseFirstNonReactFrame(stack: string): string | null {
-  const lines = stack.split('\n');
-  for (const line of lines) {
-    // V8: "(path:line:col)"; Hermes: "@path:line:col"
-    const parened = line.match(/\(([^)]+):\d+:\d+\)/);
-    const hermes = line.match(/@([^\s]+):\d+:\d+$/);
-    const path = parened?.[1] ?? hermes?.[1];
-    if (!path) continue;
-    if (path.includes('react-dom')) continue;
-    if (path.includes('react-native/Libraries')) continue;
-    if (path.includes('/react/cjs/')) continue;
-    if (path.includes('/scheduler/')) continue;
-    return path;
-  }
-  return null;
-}
-
 function isFrameworkComponent(fiber: Fiber, name: string): boolean {
+  // Top-priority signal: the babel plugin's declaration-site tag on
+  // `fiber.type` is authoritative proof that this component is user code.
+  // Short-circuit BEFORE the name-list / regex / path heuristics fire, so a
+  // user component that happens to share a name with a framework wrapper
+  // (e.g. user-defined `Provider` or `Modal`) doesn't get hidden.
+  if (isUserComponent(fiber)) return false;
+
   if (walkerFilterConfig.frameworkNames.has(name)) return true;
 
   for (const pattern of walkerFilterConfig.frameworkNamePatterns) {
@@ -846,7 +885,7 @@ const KNOWN_LIBRARY_NAMES = new Map<string, string>([
 ]);
 
 /**
- * Detect if a component that passed isUserComponent() is actually a third-party library component.
+ * Detect if a component that passed isLikelyUserComponent() is actually a third-party library component.
  * Returns a short library label if detected, undefined if it looks like user code.
  *
  * Detection strategies (in priority order):
@@ -860,6 +899,13 @@ const KNOWN_LIBRARY_NAMES = new Map<string, string>([
  * _debugSource into fiber nodes, so its absence cannot distinguish library from user code.
  */
 function detectLibraryName(fiber: Fiber, name: string): string | undefined {
+  // Top-priority signal: the babel plugin's declaration-site tag on
+  // `fiber.type` is authoritative proof that this component is user code.
+  // Short-circuit BEFORE the name-pattern checks so a user component whose
+  // name happens to look library-shaped (e.g. `Primitive.div`-style or a
+  // user-defined `__internal`) doesn't get mis-classified as `lib`.
+  if (isUserComponent(fiber)) return undefined;
+
   // Dot-notation: "ToastCollectionSlot.Slot", "Primitive.div", "DropdownMenu.Trigger"
   if (name.includes('.')) {
     return name.split('.')[0].toLowerCase();
@@ -1006,7 +1052,7 @@ export function resolveEffectiveReactKey(fiber: Fiber): string | undefined {
     (cur) => {
       // Another emitted non-framework user component above — stop, the key (if any)
       // belongs to that node, not to us.
-      if (isUserComponent(cur) && !isFrameworkComponent(cur, getComponentName(cur))) {
+      if (isLikelyUserComponent(cur) && !isFrameworkComponent(cur, getComponentName(cur))) {
         return STOP_WALK;
       }
       return typeof cur.key === 'string' ? cur.key : undefined;
@@ -1042,6 +1088,8 @@ export const __walkFiberForTesting = (
 export const __readJsxSourceFromFiberForTesting = readJsxSourceFromFiber;
 export const __resolveSourceConfidenceForTesting = resolveSourceConfidence;
 export const __resolveEffectiveSourcePathForTesting = resolveEffectiveSourcePath;
+export const __resolveEffectiveSourceLocationForTesting = resolveEffectiveSourceLocation;
+export const __parseFirstNonReactFrameForTesting = parseFirstNonReactFrame;
 
 function walkFiber(
   fiber: Fiber | null,
@@ -1067,7 +1115,7 @@ function walkFiber(
     try {
       const tag = current.tag;
 
-      if (isUserComponent(current)) {
+      if (isLikelyUserComponent(current)) {
         const name = getComponentName(current);
         const nameCount = nameCountMap.get(name) || 0;
         nameCountMap.set(name, nameCount + 1);
@@ -1121,6 +1169,18 @@ function walkFiber(
           jsxSource,
         );
 
+        // React 19.1+ stops populating `_debugSource` — only `_debugStack` survives.
+        // Without the stack-frame fallback for line/col, the click-to-source button
+        // at ComponentNode.tsx:75 (gate `filePath && lineNumber > 0`) never renders
+        // for React 19 consumers. Only reach for the stack parse when the cheap
+        // tiers haven't already produced both fields.
+        const needsStackFallback =
+          (jsxSource?.fileName ?? current._debugSource?.fileName) === undefined ||
+          (jsxSource?.lineNumber ?? current._debugSource?.lineNumber) === undefined;
+        const stackLocation = needsStackFallback
+          ? resolveEffectiveSourceLocation(current)
+          : null;
+
         const node: LiveTreeNode = {
           id: nodeId,
           name,
@@ -1129,8 +1189,12 @@ function walkFiber(
           renderPhase,
           renderReason,
           renderDuration: current.actualDuration,
-          filePath: jsxSource?.fileName ?? current._debugSource?.fileName,
-          lineNumber: jsxSource?.lineNumber ?? current._debugSource?.lineNumber,
+          filePath:
+            jsxSource?.fileName ?? current._debugSource?.fileName ?? stackLocation?.fileName,
+          lineNumber:
+            jsxSource?.lineNumber ??
+            current._debugSource?.lineNumber ??
+            stackLocation?.lineNumber,
           isFramework: framework,
           reactKey: resolveEffectiveReactKey(current),
           queryHashes,
