@@ -336,7 +336,20 @@ type DevToolsHookGlobal = {
 
 // Tree size limits to prevent JSON.stringify "Invalid string length" errors
 // in large apps (e.g., tables with hundreds of rows)
-const MAX_TREE_DEPTH = 100; // Max nesting depth of user components
+//
+// Depth is intentionally NOT feature-limited: deeply-nested trees are real
+// (nativewind doubles every element into `CssInterop.X → X`, React Navigation
+// stacks add many provider/scene layers), and a shallow cap silently drops
+// genuine leaf components that live far down the tree. `MAX_TREE_DEPTH` survives
+// only as a recursion backstop against a malformed/cyclic fiber tree blowing the
+// JS call stack. It must sit BELOW the engine's stack ceiling (V8 ≈ 10k frames)
+// to actually fire — `walkFiber` recurses ~1.3–1.5× per `depth` increment (it
+// recurses through transparent host/provider levels without bumping `depth`), so
+// 3000 leaves comfortable headroom (~4–5k frames) while being ~10× beyond any
+// realistic app depth — it never truncates a real snapshot. Snapshot byte-size
+// is bounded by `MAX_CHILDREN_PER_NODE` (breadth), the actual driver of
+// "Invalid string length".
+const MAX_TREE_DEPTH = 3000; // Stack-overflow backstop only — not a feature limit
 const MAX_CHILDREN_PER_NODE = 300; // Max children per user component node
 
 // Throttle state for tree snapshot sending.
@@ -1100,7 +1113,9 @@ function walkFiber(
 ): LiveTreeNode[] {
   if (!fiber) return [];
 
-  // Stop recursing if tree is too deep to prevent oversized snapshots
+  // Recursion backstop only (see MAX_TREE_DEPTH): guards against a malformed /
+  // cyclic fiber tree blowing the JS call stack. Real app depth never reaches it,
+  // so this no longer truncates genuine deep leaf components.
   if (depth >= MAX_TREE_DEPTH) return [];
 
   const nodes: LiveTreeNode[] = [];
