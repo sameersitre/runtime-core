@@ -1,5 +1,18 @@
 /**
- * @flotrace/runtime-core/babel-plugin
+ * FloTrace source-attribution Babel plugin (canonical implementation).
+ *
+ * Lives in runtime-core because (a) the reader side — `readJsxSourceFromFiber`,
+ * `isUserComponent`, and the `FLOTRACE_SRC_ATTR` constant — lives next to it in
+ * `jsxRuntimeUtils.ts` (single source of truth for the `data-flotrace-src`
+ * attribute name), and (b) the plugin is cross-platform: `data-*` attributes
+ * are valid on every React DOM host element AND silently ignored by the React
+ * Native renderer (see point 3 below).
+ *
+ * Consumers never reference this path directly — they install an adapter and
+ * use its re-export shim:
+ *   - Web:          `@flotrace/runtime/babel-plugin`
+ *   - React Native: `@flotrace/runtime-native/babel-plugin`
+ * Both shims `require()` this file, so there is exactly one implementation.
  *
  * Injects source attribution into user code in two complementary places so
  * every fiber in the FloTrace tree gets click-to-IDE coverage:
@@ -41,9 +54,11 @@
  *   4. JSON-encoded string value parses safely on Windows paths (`C:\...`)
  *      where a `file:line:col` delimiter would be ambiguous.
  *
- * Usage in user babel.config.js (single line, no other config changes):
+ * Usage in user babel.config.js (single line, no other config changes) —
+ * reference the adapter you installed, not this package:
  *
- *   plugins: ['@flotrace/runtime-core/babel-plugin']
+ *   plugins: ['@flotrace/runtime/babel-plugin']         // web
+ *   plugins: ['@flotrace/runtime-native/babel-plugin']  // React Native
  *
  * Options:
  *   - development (boolean, default true): when false, the plugin no-ops so

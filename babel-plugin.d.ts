@@ -8,7 +8,10 @@
  */
 
 import type * as BabelTypes from '@babel/types';
-import type { NodePath, PluginObj } from '@babel/traverse';
+import type { NodePath } from '@babel/traverse';
+// `PluginObj` is exported from `@babel/core` (via `@types/babel__core`), NOT
+// `@babel/traverse` — importing it from traverse resolves to `any`/errors.
+import type { PluginObj } from '@babel/core';
 
 export interface FlotraceBabelPluginOptions {
   /** Set to `false` to no-op (e.g. for production builds). Default `true`. */

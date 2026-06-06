@@ -1,5 +1,7 @@
 /**
- * Tests for `@flotrace/runtime-core/babel-plugin`.
+ * Tests for the FloTrace source-attribution Babel plugin (canonical
+ * implementation in runtime-core; re-exported by `@flotrace/runtime/babel-plugin`
+ * and `@flotrace/runtime-native/babel-plugin`).
  *
  * Runs the plugin's visitor against a real Babel AST (parsed via
  * `@babel/parser`) and asserts the resulting code via `@babel/generator`.
@@ -59,8 +61,14 @@ function transform(
   };
 
   const wrappedVisitor: Record<string, (path: unknown) => void> = {};
-  for (const nodeType of Object.keys(pluginInstance.visitor)) {
-    const fn = pluginInstance.visitor[nodeType];
+  // The plugin's `visitor` is a strongly-typed Babel `Visitor` (no string index
+  // signature); we drive it manually by node-type name, so cast to a record.
+  const visitorMap = pluginInstance.visitor as unknown as Record<
+    string,
+    ((path: unknown, state: unknown) => void) | undefined
+  >;
+  for (const nodeType of Object.keys(visitorMap)) {
+    const fn = visitorMap[nodeType];
     if (typeof fn !== 'function') continue;
     wrappedVisitor[nodeType] = (path: unknown) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -113,8 +121,14 @@ function transformAndExtract(
     file: { opts: { filename } },
   };
   const wrappedVisitor: Record<string, (path: unknown) => void> = {};
-  for (const nodeType of Object.keys(pluginInstance.visitor)) {
-    const fn = pluginInstance.visitor[nodeType];
+  // The plugin's `visitor` is a strongly-typed Babel `Visitor` (no string index
+  // signature); we drive it manually by node-type name, so cast to a record.
+  const visitorMap = pluginInstance.visitor as unknown as Record<
+    string,
+    ((path: unknown, state: unknown) => void) | undefined
+  >;
+  for (const nodeType of Object.keys(visitorMap)) {
+    const fn = visitorMap[nodeType];
     if (typeof fn !== 'function') continue;
     wrappedVisitor[nodeType] = (path: unknown) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -223,10 +237,9 @@ describe('flotrace babel plugin — tags component definitions', () => {
     // so the walker reads it off `fiber.type` (the function itself). For
     // that route to work, the plugin must attach the attribute to the
     // function reference at declaration time.
-    const out = transform(
-      'function HomeScreen() { return <View />; }',
-      { filename: '/p/HomeScreen.tsx' },
-    );
+    const out = transform('function HomeScreen() { return <View />; }', {
+      filename: '/p/HomeScreen.tsx',
+    });
     expect(out).toMatch(/if \(HomeScreen\)\s*\{?\s*HomeScreen\["data-flotrace-src"\]\s*=/);
   });
 
@@ -236,9 +249,7 @@ describe('flotrace babel plugin — tags component definitions', () => {
   });
 
   test('injects after a class declaration', () => {
-    const out = transform(
-      'class HomeScreen extends React.Component { render() { return null; } }',
-    );
+    const out = transform('class HomeScreen extends React.Component { render() { return null; } }');
     expect(out).toMatch(/if \(HomeScreen\)\s*\{?\s*HomeScreen\["data-flotrace-src"\]\s*=/);
   });
 
@@ -358,8 +369,9 @@ describe('flotrace babel plugin — contract with walker', () => {
     };
     // Simulate the plugin's `HomeScreen["data-flotrace-src"] = '{...}'`
     // assignment that runs at module load.
-    (componentFunction as unknown as Record<string, unknown>)['data-flotrace-src'] =
-      JSON.stringify({ f: '/p/HomeScreen.tsx', l: 1, c: 1 });
+    (componentFunction as unknown as Record<string, unknown>)['data-flotrace-src'] = JSON.stringify(
+      { f: '/p/HomeScreen.tsx', l: 1, c: 1 },
+    );
 
     // A react-navigation-instantiated fiber: empty memoizedProps, but
     // fiber.type IS the tagged function.
