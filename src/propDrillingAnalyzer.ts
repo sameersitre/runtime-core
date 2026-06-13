@@ -11,6 +11,7 @@ import type {
   RuntimeMessage,
 } from './types';
 import type { Fiber } from './fiberTreeWalker';
+import { FLOTRACE_SRC_ATTR } from './jsxRuntimeUtils';
 
 // Runtime WebSocket client type (duck-typed to avoid circular import)
 interface MinimalWsClient {
@@ -67,6 +68,8 @@ const EXCLUDED_PROP_NAMES = new Set([
   // Test IDs
   'data-testid',
   'testID',
+  // FloTrace's own babel-plugin source-attribution marker — never a real prop
+  FLOTRACE_SRC_ATTR,
 ]);
 
 /** Returns true if this prop should never be flagged as drilling. */

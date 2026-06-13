@@ -17,7 +17,7 @@
  */
 
 import type { CascadeRecord, CascadeNode, CascadeReason, TriggerRecord } from './types';
-import { readJsxSourceFromFiber } from './jsxRuntimeUtils';
+import { readJsxSourceFromFiber, FLOTRACE_SRC_ATTR } from './jsxRuntimeUtils';
 import { classifyLanes, getFinishedLanes } from './laneDetector';
 import { getFiberDisplayName } from './fiberUtils';
 
@@ -107,7 +107,7 @@ function getChangedPropKeys(
   const changed: string[] = [];
   const allKeys = new Set([...Object.keys(prev), ...Object.keys(next)]);
   for (const key of allKeys) {
-    if (key === 'children') continue;
+    if (key === 'children' || key === FLOTRACE_SRC_ATTR) continue;
     if (prev[key] !== next[key]) changed.push(key);
   }
   return changed;

@@ -26,6 +26,7 @@ import {
   readJsxSourceFromFiber,
   isUserComponent,
   parseFirstNonReactFrame,
+  FLOTRACE_SRC_ATTR,
   type FlotraceJsxSource,
 } from './jsxRuntimeUtils';
 import { serializeValue, serializeProps } from './serializer';
@@ -2022,7 +2023,7 @@ function diffProps(
 
   const allKeys = new Set([...Object.keys(prev), ...Object.keys(next)]);
   for (const key of allKeys) {
-    if (key === 'children') continue;
+    if (key === 'children' || key === FLOTRACE_SRC_ATTR) continue;
     if (!Object.is(prev[key], next[key])) {
       changes.push({
         key,
