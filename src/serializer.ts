@@ -1,4 +1,5 @@
 import type { SerializedValue } from './types';
+import { FLOTRACE_SRC_ATTR } from './jsxRuntimeUtils';
 
 /**
  * Maximum depth for object serialization to prevent infinite recursion
@@ -6,9 +7,16 @@ import type { SerializedValue } from './types';
 const MAX_DEPTH = 5;
 
 /**
- * Maximum string length before truncation
+ * Maximum string length sent in full. Generous (10 KB) so real inspection values —
+ * bios, descriptions, URLs, error stacks, small JSON blobs — are never truncated; the
+ * 500-char cap used to chop a 635-char bio down to a contentless marker. A ceiling
+ * still exists because the serializer also runs on store-state-on-every-change, and an
+ * unbounded multi-MB string (e.g. a base64 data URL held in state) would bloat the
+ * WebSocket frame and add main-thread serialize cost on a hot path. When a string DOES
+ * exceed this, we still send its leading `MAX_STRING_LENGTH` chars as a `preview` so the
+ * inspector shows content, never an empty `[truncated]`.
  */
-const MAX_STRING_LENGTH = 500;
+const MAX_STRING_LENGTH = 10000;
 
 /**
  * Maximum array length before truncation
@@ -57,6 +65,10 @@ export function serializeValue(
         __type: 'truncated',
         originalType: 'string',
         length: value.length,
+        // Send the leading slice so the inspector shows real content instead of an
+        // empty marker. The full length is in `length` so the UI can note how much
+        // was elided.
+        preview: value.slice(0, MAX_STRING_LENGTH),
       };
     }
     return value;
@@ -200,6 +212,13 @@ export function serializeProps(props: Record<string, unknown>): Record<string, S
 
     // Skip internal props (starting with __)
     if (key.startsWith('__')) {
+      continue;
+    }
+
+    // Skip FloTrace's own babel-plugin source-attribution attribute — it's an
+    // internal marker injected onto every JSX element, never a real user prop.
+    // Without this it leaks into the Props inspector as `data-flotrace-src`.
+    if (key === FLOTRACE_SRC_ATTR) {
       continue;
     }
 

@@ -38,7 +38,18 @@ export type SerializedValue =
   | { __type: 'undefined' }
   | { __type: 'symbol'; description?: string }
   | { __type: 'circular' }
-  | { __type: 'truncated'; originalType: string; length?: number };
+  | {
+      __type: 'truncated';
+      originalType: string;
+      length?: number;
+      /**
+       * For truncated strings: the leading slice of the original value (up to the
+       * serializer's string cap). Lets the inspector show real content instead of a
+       * contentless `[string (N) truncated]` marker. Absent for non-string truncations
+       * (depth / array / object / error), which have no meaningful preview.
+       */
+      preview?: string;
+    };
 
 /**
  * Messages sent from runtime to extension
