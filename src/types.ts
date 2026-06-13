@@ -1138,18 +1138,50 @@ export type ResolvedFloTraceConfig = Required<Omit<FloTraceConfig, OptionalConfi
 /**
  * Default configuration
  */
+/**
+ * Build-time production detection. Shared by `DEFAULT_CONFIG.enabled` and the web/native
+ * providers' production no-op early-return so a consumer's shipped app pays nothing.
+ *
+ * Why the BARE `process.env.NODE_ENV` token (not `globalThis.process.env.NODE_ENV`):
+ * bundlers — Webpack DefinePlugin, Vite, esbuild `define` — statically replace ONLY the
+ * bare member expression `process.env.NODE_ENV` with a string literal at build time. They
+ * do NOT match `globalThis.process.env.NODE_ENV`. The previous `globalThis.process?.env?.`
+ * heuristic therefore never got folded and silently failed OPEN in production on bundlers
+ * that don't expose a runtime `process` shim (Vite / Rsbuild / Webpack `node:false`) — every
+ * end user then ran the full fiber walker. Referencing the bare token lets the bundler fold
+ * this to a constant and dead-code-eliminate the disabled path.
+ *
+ * The `try/catch` is deliberate and NOT a `typeof process` guard: a `typeof process` check
+ * would short-circuit BEFORE the replaced token on Vite (where `process` is undefined at
+ * runtime even though the token WAS replaced at build time), defeating the fold. With
+ * try/catch, a raw-ESM / no-bundler context where `process` is genuinely undefined throws a
+ * ReferenceError that we swallow → fail OPEN (treated as development), preserving the
+ * "works out of the box in dev" guarantee.
+ */
+export function isProductionBuild(): boolean {
+  try {
+    if (process.env.NODE_ENV === 'production') {
+      return true;
+    }
+  } catch {
+    // `process` undefined and the bundler didn't replace the token (raw ESM / no bundler) —
+    // not a production signal; fall through to the runtime-shim check below.
+  }
+  // Fallback: some setups expose a runtime `globalThis.process` shim instead of replacing
+  // the token. This can't be statically folded, so it only ever runs in unbundled contexts.
+  const shimmed = (globalThis as { process?: { env?: { NODE_ENV?: string } } }).process?.env
+    ?.NODE_ENV;
+  return shimmed === 'production';
+}
+
 export const DEFAULT_CONFIG: ResolvedFloTraceConfig = {
   port: 3457,
   appName: 'React App',
-  // Default-on unless an explicit `process.env.NODE_ENV === 'production'` is
-  // detected. The previous heuristic (`=== 'development'`) silently disabled
-  // the runtime in any browser context that doesn't shim `process` (e.g. Vite,
-  // Webpack 5 with `node: false`, Rsbuild) — making the README quickstart fail
-  // for everyone. Production safety is handled by users gating the import via
-  // the dynamic-import pattern documented in the runtime READMEs.
-  enabled:
-    (globalThis as { process?: { env?: { NODE_ENV?: string } } }).process?.env?.NODE_ENV !==
-    'production',
+  // Default-on in development, off in production. See `isProductionBuild` for the bundler
+  // mechanics. The web/native providers ALSO early-return in production (a defence-in-depth
+  // strip that lets bundlers dead-code-eliminate the install entirely), so this default and
+  // the provider strip together close the "shipped a live runtime to end users" gap.
+  enabled: !isProductionBuild(),
   autoReconnect: true,
   reconnectInterval: 2000,
   trackAllRenders: true,

@@ -21,7 +21,7 @@ export type {
   SourceConfidence,
   FlotraceJsxSource,
 } from './types';
-export { DEFAULT_CONFIG } from './types';
+export { DEFAULT_CONFIG, isProductionBuild } from './types';
 
 // JSX runtime helpers (additive export per PRD-JSX-RUNTIME §13 Q3). The
 // jsx-runtime entries themselves live at @flotrace/runtime-core/jsx-runtime
