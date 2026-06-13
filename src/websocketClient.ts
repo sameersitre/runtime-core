@@ -120,9 +120,19 @@ export class FloTraceWebSocketClient {
         }
       };
 
-      this.ws.onerror = (error) => {
+      this.ws.onerror = () => {
         this.isConnecting = false;
-        console.error('[FloTrace] WebSocket error:', error);
+        // The WebSocket `error` event is opaque by spec (no actionable detail) and is
+        // always immediately followed by `onclose`, which logs the disconnect + schedules
+        // a reconnect. Demote to `console.warn` (was `console.error`) so React Native's
+        // LogBox doesn't raise a full-screen red overlay for this expected, self-healing
+        // condition (desktop app not running / mid-reconnect). The previous
+        // `console.error('...', error)` also dumped an unhelpful `{"_type":"error",...}`
+        // serialization of the event. The message is kept stable (host:port only) so
+        // LogBox collapses repeated reconnect attempts into a single dismissible notice.
+        console.warn(
+          `[FloTrace] Could not reach the desktop app at ${host}:${this.config.port} — is FloTrace running?`,
+        );
       };
     } catch (error) {
       this.isConnecting = false;
