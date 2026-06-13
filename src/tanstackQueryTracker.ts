@@ -121,8 +121,12 @@ let trackedClient: TanStackQueryClientApi | null = null;
 const MAX_EVENTS_PER_QUERY = 50;
 
 interface QueryTrackingState {
-  /** Fast hash of last known data (for wasted refetch detection) */
-  lastDataHash: string;
+  /**
+   * Reference to the last known data (for wasted-refetch detection). Compared by
+   * reference identity — see `dataReferenceChanged`. Holding the reference does not
+   * retain anything the live cache wouldn't already hold (same object TanStack keeps).
+   */
+  lastData: unknown;
   /** Last known dataUpdatedAt timestamp */
   lastDataUpdatedAt: number;
   /** Previous status for transition detection */
@@ -325,19 +329,29 @@ export function getTanstackSnapshot(): Map<string, { queryKey: unknown[]; data: 
 // Per-Query Tracking Logic
 // ============================================================================
 
-/** Fast data hash — JSON.stringify is fast enough for shallow comparison */
-function computeDataHash(data: unknown): string {
-  if (data === null || data === undefined) return '__null__';
-  try {
-    return JSON.stringify(data);
-  } catch {
-    return '__unhashable__';
-  }
+/**
+ * Whether a query's data changed since we last saw it.
+ *
+ * Compared by REFERENCE (`Object.is`), NOT a `JSON.stringify` content hash. TanStack
+ * Query's default `structuralSharing` returns the SAME object reference when a refetch
+ * yields structurally-identical data, so reference identity is an O(1), allocation-free,
+ * size-independent signal for "did the data actually change" — exactly what wasted-refetch
+ * detection needs. The previous content hash ran an UNCAPPED `JSON.stringify` over the full
+ * payload on every status transition (≥2 per fetch), a synchronous main-thread cost that
+ * scaled with cache size — a multi-MB cached list could drop frames on the JS-thread-bound
+ * React Native renderer during a focus-triggered refetch.
+ *
+ * Trade-off: a consumer who sets `structuralSharing: false` gets a fresh reference on every
+ * fetch, so wasted refetches are OVER-reported (never under-reported) — a safe, cheap
+ * degradation rather than a crash or a size-proportional stall.
+ */
+function dataReferenceChanged(prev: unknown, current: unknown): boolean {
+  return !Object.is(prev, current);
 }
 
 function initQueryTracking(query: DuckQuery): QueryTrackingState {
   const state: QueryTrackingState = {
-    lastDataHash: computeDataHash(query.state.data),
+    lastData: query.state.data,
     lastDataUpdatedAt: query.state.dataUpdatedAt,
     prevStatus: query.state.status,
     prevFetchStatus: query.state.fetchStatus,
@@ -369,9 +383,8 @@ function updateQueryTracking(query: DuckQuery, eventType: string): void {
   const fetchStatusChanged = tracking.prevFetchStatus !== currentFetchStatus;
 
   if (statusChanged || fetchStatusChanged) {
-    // Check if data changed during this transition
-    const currentDataHash = computeDataHash(query.state.data);
-    const dataChanged = currentDataHash !== tracking.lastDataHash;
+    // Check if data changed during this transition (O(1) reference compare).
+    const dataChanged = dataReferenceChanged(tracking.lastData, query.state.data);
 
     // Record timeline event
     const event: TanStackQueryEvent = {
@@ -397,8 +410,8 @@ function updateQueryTracking(query: DuckQuery, eventType: string): void {
       if (!dataChanged) {
         tracking.wastedRefetchCount++;
       }
-      // Update data hash after fetch completes
-      tracking.lastDataHash = currentDataHash;
+      // Update last-seen data reference after fetch completes
+      tracking.lastData = query.state.data;
       tracking.lastDataUpdatedAt = query.state.dataUpdatedAt;
 
       // Causal API→TanStack correlation via WeakMap tag

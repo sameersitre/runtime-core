@@ -9,6 +9,11 @@ import { serializeValue } from './serializer';
 
 /** Previous snapshot of action state per nodeId to detect changes */
 const prevActionStateMap = new Map<string, string>(); // nodeId → JSON snapshot
+// Bound the key count. Only `clearActionStateCache()` (called on full walker uninstall, not
+// on disconnect/reset) ever shrinks this, so across a long dev session with navigation churn
+// it would otherwise grow by every action-state-using nodeId seen. Evicting an entry only
+// causes a harmless re-emit of that component's current action state on the next scan.
+const MAX_TRACKED_ACTION_STATE = 1000;
 
 /** React 19 useActionState stores: [state, dispatch, isPending] triple in memoizedState.
  * Note: useFormStatus uses an object shape { pending, data, method, action } — incompatible
@@ -91,6 +96,14 @@ export function scanActionStateChanges(
         entries.map((e) => ({ i: e.hookIndex, p: e.isPending, s: e.state })),
       );
       if (prevActionStateMap.get(nodeId) === snapshot) continue;
+      // FIFO-evict the oldest tracked nodeId when at capacity (only on a genuinely new key).
+      if (
+        !prevActionStateMap.has(nodeId) &&
+        prevActionStateMap.size >= MAX_TRACKED_ACTION_STATE
+      ) {
+        const oldest = prevActionStateMap.keys().next().value;
+        if (oldest !== undefined) prevActionStateMap.delete(oldest);
+      }
       prevActionStateMap.set(nodeId, snapshot);
 
       const componentName = nodeId.split('/').pop()?.replace(/-\d+$/, '') ?? 'Unknown';

@@ -383,7 +383,34 @@ export function readJsxSourceFromFiber(fiber: {
  * / valueTraceResolver can all share one definition without importing the
  * walker's `Fiber` type.
  */
+/**
+ * Per-fiber memo for {@link isUserComponent}. The result is a pure function of fields fixed
+ * at fiber creation (`type` / `memoizedProps` / `_debugSource` / `_debugStack`), and the
+ * walker calls `isUserComponent` up to 3× per node (via `resolveSourceConfidence`,
+ * `isFrameworkComponent`, `detectLibraryName`) plus once per ancestor in
+ * `resolveEffectiveReactKey`. The Route-C `_debugStack` parse is the costly tier, so caching
+ * by fiber reference collapses N parses into 1. `WeakMap` ⇒ entries are GC'd with the fiber,
+ * so there's no unbounded growth and nothing to clear across snapshots.
+ */
+const userComponentCache = new WeakMap<object, boolean>();
+
 export function isUserComponent(fiber: {
+  type?: unknown;
+  memoizedProps?: Record<string, unknown> | null;
+  _debugSource?: { fileName: string; lineNumber?: number } | null;
+  _debugStack?: { stack?: string } | null;
+}): boolean {
+  // Memoize by fiber reference. Every caller passes a fiber-like OBJECT; the guard only
+  // protects against a hypothetical primitive arg (WeakMap keys must be objects).
+  if (typeof fiber !== 'object' || fiber === null) return computeIsUserComponent(fiber);
+  const cached = userComponentCache.get(fiber);
+  if (cached !== undefined) return cached;
+  const result = computeIsUserComponent(fiber);
+  userComponentCache.set(fiber, result);
+  return result;
+}
+
+function computeIsUserComponent(fiber: {
   type?: unknown;
   memoizedProps?: Record<string, unknown> | null;
   _debugSource?: { fileName: string; lineNumber?: number } | null;

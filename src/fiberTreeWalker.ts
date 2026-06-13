@@ -1503,6 +1503,15 @@ function adaptSnapshotInterval(nodeCount: number): void {
  * snapshotIntervalMs, lastSnapshotSentTime, isWalking, fiberRefMap.
  */
 function executeSnapshot(root: FiberRoot): void {
+  // Bail BEFORE the O(tree-size) walk when there's no desktop listening. Previously the
+  // connected-check ran after buildTreeFromFiberRoot, so an enabled-but-disconnected dev
+  // runtime walked the entire fiber tree on every scheduled snapshot for nothing.
+  const client = getWebSocketClient();
+  if (!client.connected) {
+    debugLog('[FloTrace] WebSocket not connected, skipping snapshot walk');
+    return;
+  }
+
   if (isWalking) {
     debugLog('[FloTrace] Skipped snapshot: already walking');
     return;
@@ -1520,12 +1529,6 @@ function executeSnapshot(root: FiberRoot): void {
     // fiberRefMap is populated during buildTreeFromFiberRoot → walkFiber().
     const nodeCount = fiberRefMap.size;
     adaptSnapshotInterval(nodeCount);
-
-    const client = getWebSocketClient();
-    if (!client.connected) {
-      console.warn('[FloTrace] WebSocket not connected, cannot send tree snapshot');
-      return;
-    }
 
     const currentFlatTree = flattenTree(tree);
 

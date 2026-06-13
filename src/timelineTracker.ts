@@ -15,6 +15,11 @@ import type { FloTraceWebSocketClient } from './websocketClient';
 const MAX_EVENTS_PER_COMPONENT = 100;
 const FLUSH_INTERVAL_MS = 500;
 const MAX_PENDING_EVENTS = 200;
+// Cap the number of DISTINCT components tracked. The per-component ring buffer is already
+// bounded (MAX_EVENTS_PER_COMPONENT); without this, the `timelines` Map's KEY count grows
+// unbounded over a long dev session — every navigation / list re-key mints a fresh
+// path-based nodeId and the map only cleared on uninstall. Generous so real apps never evict.
+const MAX_TRACKED_COMPONENTS = 2000;
 
 // Ring buffer per component nodeId → events[]
 const timelines = new Map<string, TimelineEvent[]>();
@@ -87,6 +92,13 @@ export function recordTimelineEvent(
   // Add to ring buffer
   let events = timelines.get(nodeId);
   if (!events) {
+    // FIFO-evict the oldest-tracked component when at capacity. Flushed events were already
+    // sent over the WS, so eviction only drops the LOCAL on-demand buffer for the oldest
+    // component (getTimeline → []), never sent data.
+    if (timelines.size >= MAX_TRACKED_COMPONENTS) {
+      const oldest = timelines.keys().next().value;
+      if (oldest !== undefined) timelines.delete(oldest);
+    }
     events = [];
     timelines.set(nodeId, events);
   }
