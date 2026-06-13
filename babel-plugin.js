@@ -77,6 +77,24 @@ const FLOTRACE_ATTR_NAME = 'data-flotrace-src';
 // generated names (`_AppComponent` etc.).
 const PASCAL_CASE_RE = /^[A-Z][A-Za-z0-9_$]*$/;
 
+/**
+ * Is `name` a React-component-shaped identifier (PascalCase) rather than a
+ * SCREAMING_SNAKE_CASE constant?
+ *
+ * Components are PascalCase and ALWAYS contain a lowercase letter (`App`,
+ * `MediaRow`, `Button`). All-caps names (`CARD_WIDTH`, `PAGE_SIZE`,
+ * `DEFAULT_MAX_ITEMS`) are constants — never components — so tagging them is
+ * pure noise and, when they hold a runtime-computed primitive
+ * (`const CARD_WIDTH = screenWidth / 2.5`), used to crash the consumer app at
+ * module eval ("Cannot create property 'data-flotrace-src' on number"). The
+ * lowercase-letter requirement excludes them. A rare single-/all-uppercase
+ * component (`const UI = …`) loses only the definition-site (route B) tag; it
+ * still gets the call-site (route A) JSX-attribute tag.
+ */
+function isComponentName(name) {
+  return PASCAL_CASE_RE.test(name) && /[a-z]/.test(name);
+}
+
 /** Build the JSON payload string for the `data-flotrace-src` value. */
 function buildPayload(filename, loc) {
   return JSON.stringify({
@@ -101,6 +119,12 @@ function shouldVisit(state, loc) {
  * Reject obviously-non-component initializer types. PascalCase + a function
  * / class / HOC-call init IS a component (or close enough that tagging is
  * harmless). PascalCase + a primitive / array / object literal is NOT.
+ *
+ * The primitive group below also covers arithmetic / comparison / logical-not /
+ * `typeof` / `void` expressions (`const CARD_WIDTH = screenWidth / 2.5` is a
+ * BinaryExpression; `const X = -y` / `!flag` are UnaryExpressions) — these always
+ * yield a primitive, so excluding them stops a dead (and, before the runtime
+ * typeof guard, crashing) declaration tag from being emitted.
  */
 function isComponentLikeInit(node) {
   if (!node) return false;
@@ -114,33 +138,79 @@ function isComponentLikeInit(node) {
     case 'ObjectExpression':
     case 'TemplateLiteral':
     case 'RegExpLiteral':
+    case 'BinaryExpression':
+    case 'UnaryExpression':
       return false;
     default:
       // Component-shaped: ArrowFunctionExpression, FunctionExpression,
       // ClassExpression, CallExpression (HOC wrap), Identifier (re-export),
-      // MemberExpression (`X.Y`), ConditionalExpression, etc.
+      // MemberExpression (`X.Y`), ConditionalExpression, LogicalExpression
+      // (`A || Fallback`), etc. The runtime typeof guard below makes a
+      // mis-classified primitive here a harmless no-op rather than a crash.
       return true;
   }
 }
 
 module.exports = function flotraceSourceAttributionPlugin({ types: t }) {
   /**
-   * Build the `Identifier['data-flotrace-src'] = '<payload>';` statement.
-   * Guarded with `if (Identifier)` so reassignments to `undefined`/`null`
-   * before the assignment runs don't throw at module load.
+   * Build:
+   *   try {
+   *     if (X && (typeof X === 'object' || typeof X === 'function'))
+   *       X['data-flotrace-src'] = '<payload>';
+   *   } catch (_flotraceErr) {}
+   *
+   * This is the CONSUMER-AGNOSTIC "can never crash the host app" guarantee — it
+   * holds for ANY binding `X`, not just the reported numeric case. Two layers:
+   *
+   *   - `try/catch` (the catch-all): assigning a property can throw for reasons
+   *     no static AST analysis can rule out — a frozen/sealed/non-extensible
+   *     object (`const Routes = Object.freeze({...})` — a common pattern, and a
+   *     CallExpression init so it passes every static heuristic), a Proxy with a
+   *     throwing `set` trap, or a getter-only property. The catch swallows all of
+   *     them so source attribution can never break the consumer's app.
+   *
+   *   - `typeof` guard (cheap pre-check): the COMMON mis-classification is a
+   *     PascalCase binding that resolves to a PRIMITIVE at runtime
+   *     (`const CARD_WIDTH = screenWidth / 2.5` → number, `const Color =
+   *     theme.primary` → string) — assigning to a primitive throws in strict
+   *     mode. The guard skips those without entering the throw path, so the
+   *     try/catch only ever actually fires for the rare exotic-object cases and
+   *     "pause on caught exceptions" debuggers stay quiet during normal runs.
+   *     `X &&` short-circuits null/undefined before `typeof` (`typeof null ===
+   *     'object'` would otherwise slip through).
    */
   function buildDeclTaggingStatement(name, payload) {
-    const idRef = t.identifier(name);
     const memberAccess = t.memberExpression(
       t.identifier(name),
       t.stringLiteral(FLOTRACE_ATTR_NAME),
       /* computed */ true,
     );
-    return t.ifStatement(
-      idRef,
+    const isObject = t.binaryExpression(
+      '===',
+      t.unaryExpression('typeof', t.identifier(name)),
+      t.stringLiteral('object'),
+    );
+    const isFunction = t.binaryExpression(
+      '===',
+      t.unaryExpression('typeof', t.identifier(name)),
+      t.stringLiteral('function'),
+    );
+    const guard = t.logicalExpression(
+      '&&',
+      t.identifier(name),
+      t.logicalExpression('||', isObject, isFunction),
+    );
+    const guardedAssign = t.ifStatement(
+      guard,
       t.expressionStatement(
         t.assignmentExpression('=', memberAccess, t.stringLiteral(payload)),
       ),
+    );
+    // Explicit catch binding (not optional-catch) for maximum engine
+    // compatibility — older Hermes / Metro targets predate ES2019.
+    return t.tryStatement(
+      t.blockStatement([guardedAssign]),
+      t.catchClause(t.identifier('_flotraceErr'), t.blockStatement([])),
     );
   }
 
@@ -152,37 +222,45 @@ module.exports = function flotraceSourceAttributionPlugin({ types: t }) {
    * Returns true when injection happened (used by callers to mark the node
    * as visited and prevent re-injection).
    */
+  /**
+   * Does `stmt` assign `name['data-flotrace-src']`? Matches the injected shape
+   * `try { if (<guard>) name['data-flotrace-src'] = … } catch {}` by looking at
+   * the ASSIGNMENT TARGET, so it survives changes to the guard / wrapper shape.
+   */
+  function isExistingDeclTag(stmt, name) {
+    if (!stmt || stmt.type !== 'TryStatement' || !stmt.block) return false;
+    const body = stmt.block.body || [];
+    for (let i = 0; i < body.length; i++) {
+      const inner = body[i];
+      if (!inner || inner.type !== 'IfStatement' || !inner.consequent) continue;
+      const cons = inner.consequent;
+      const expr = cons.type === 'ExpressionStatement' ? cons.expression : null;
+      if (!expr || expr.type !== 'AssignmentExpression') continue;
+      const left = expr.left;
+      if (
+        left.type === 'MemberExpression' &&
+        left.computed &&
+        left.object.type === 'Identifier' &&
+        left.object.name === name &&
+        left.property.type === 'StringLiteral' &&
+        left.property.value === FLOTRACE_ATTR_NAME
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   function insertDeclTagAfter(path, name, payload) {
-    // Idempotency: scan siblings for an existing assignment to the same
-    // identifier + same attribute. Babel can re-visit the path after other
-    // plugins mutate the program.
+    // Idempotency: skip if a previous run already injected the tag for this
+    // identifier. Babel can re-visit the path after other plugins mutate the
+    // program (and the plugin runs again on already-transformed output).
     const siblings =
       path.parentPath && path.parentPath.get('body')
         ? [].concat(path.parentPath.get('body'))
         : [];
     for (let i = 0; i < siblings.length; i++) {
-      const sib = siblings[i].node;
-      if (
-        sib &&
-        sib.type === 'IfStatement' &&
-        sib.test &&
-        sib.test.type === 'Identifier' &&
-        sib.test.name === name &&
-        sib.consequent &&
-        sib.consequent.type === 'ExpressionStatement' &&
-        sib.consequent.expression &&
-        sib.consequent.expression.type === 'AssignmentExpression'
-      ) {
-        const left = sib.consequent.expression.left;
-        if (
-          left.type === 'MemberExpression' &&
-          left.computed &&
-          left.property.type === 'StringLiteral' &&
-          left.property.value === FLOTRACE_ATTR_NAME
-        ) {
-          return false;
-        }
-      }
+      if (isExistingDeclTag(siblings[i].node, name)) return false;
     }
     path.insertAfter(buildDeclTaggingStatement(name, payload));
     return true;
@@ -256,7 +334,7 @@ module.exports = function flotraceSourceAttributionPlugin({ types: t }) {
       // ────────────────────────────────────────────────────────────
       FunctionDeclaration(path, state) {
         const id = path.node.id;
-        if (!id || !PASCAL_CASE_RE.test(id.name)) return;
+        if (!id || !isComponentName(id.name)) return;
         const filename = shouldVisit(state, path.node.loc);
         if (!filename) return;
         // If wrapped in `export default function X() {}` /
@@ -274,7 +352,7 @@ module.exports = function flotraceSourceAttributionPlugin({ types: t }) {
 
       ClassDeclaration(path, state) {
         const id = path.node.id;
-        if (!id || !PASCAL_CASE_RE.test(id.name)) return;
+        if (!id || !isComponentName(id.name)) return;
         const filename = shouldVisit(state, path.node.loc);
         if (!filename) return;
         const target =
@@ -289,7 +367,7 @@ module.exports = function flotraceSourceAttributionPlugin({ types: t }) {
       VariableDeclarator(path, state) {
         const id = path.node.id;
         if (!id || id.type !== 'Identifier') return;
-        if (!PASCAL_CASE_RE.test(id.name)) return;
+        if (!isComponentName(id.name)) return;
         if (!isComponentLikeInit(path.node.init)) return;
         const filename = shouldVisit(state, path.node.loc);
         if (!filename) return;

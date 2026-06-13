@@ -240,24 +240,24 @@ describe('flotrace babel plugin — tags component definitions', () => {
     const out = transform('function HomeScreen() { return <View />; }', {
       filename: '/p/HomeScreen.tsx',
     });
-    expect(out).toMatch(/if \(HomeScreen\)\s*\{?\s*HomeScreen\["data-flotrace-src"\]\s*=/);
+    expect(out).toMatch(/HomeScreen\["data-flotrace-src"\]\s*=/);
   });
 
   test('injects after an arrow-function const declaration', () => {
     const out = transform('const HomeScreen = () => <View />;');
-    expect(out).toMatch(/if \(HomeScreen\)\s*\{?\s*HomeScreen\["data-flotrace-src"\]\s*=/);
+    expect(out).toMatch(/HomeScreen\["data-flotrace-src"\]\s*=/);
   });
 
   test('injects after a class declaration', () => {
     const out = transform('class HomeScreen extends React.Component { render() { return null; } }');
-    expect(out).toMatch(/if \(HomeScreen\)\s*\{?\s*HomeScreen\["data-flotrace-src"\]\s*=/);
+    expect(out).toMatch(/HomeScreen\["data-flotrace-src"\]\s*=/);
   });
 
   test('injects after an HOC-wrapped const (CallExpression init)', () => {
     // `const Foo = memo(InnerFoo)` / `const Foo = withRouter(Inner)` —
     // PascalCase + CallExpression init counts as component-like.
     const out = transform('const Foo = memo(InnerFoo);');
-    expect(out).toMatch(/if \(Foo\)\s*\{?\s*Foo\["data-flotrace-src"\]\s*=/);
+    expect(out).toMatch(/Foo\["data-flotrace-src"\]\s*=/);
   });
 
   test('injects after `export default function Name() {}` AFTER the export', () => {
@@ -267,13 +267,13 @@ describe('flotrace babel plugin — tags component definitions', () => {
     // statement which Babel doesn't allow as a sibling.
     const out = transform('export default function HomeScreen() { return null; }');
     expect(out).toContain('export default function HomeScreen');
-    expect(out).toMatch(/if \(HomeScreen\)/);
+    expect(out).toMatch(/HomeScreen\["data-flotrace-src"\]\s*=/);
   });
 
   test('injects after `export const Foo = ...` AFTER the export', () => {
     const out = transform('export const Foo = () => null;');
     expect(out).toContain('export const Foo');
-    expect(out).toMatch(/if \(Foo\)/);
+    expect(out).toMatch(/Foo\["data-flotrace-src"\]\s*=/);
   });
 
   test('skips lowercase identifiers (utility functions / variables)', () => {
@@ -302,6 +302,78 @@ describe('flotrace babel plugin — tags component definitions', () => {
     expect(out).not.toMatch(/APP_NAME\["data-flotrace-src"\]/);
     expect(out).not.toMatch(/COLORS\["data-flotrace-src"\]/);
     expect(out).not.toMatch(/SUPPORTED_LANGS\["data-flotrace-src"\]/);
+  });
+
+  test('skips SCREAMING_SNAKE_CASE consts with a runtime-computed init (crash regression)', () => {
+    // Regression: `const CARD_WIDTH = screenWidth / 2.5` (a BinaryExpression, NOT
+    // a NumericLiteral, so the old literal-only init check let it through) matched
+    // the old PascalCase regex and emitted `if (CARD_WIDTH) CARD_WIDTH[...] = ...`.
+    // At runtime CARD_WIDTH is the number 160.8, so the truthy `if` passed and the
+    // property assignment threw "Cannot create property 'data-flotrace-src' on
+    // number", crashing the consumer's RN app on load / Fast Refresh.
+    const out = transform(`
+      const { width: screenWidth } = Dimensions.get('window');
+      const CARD_WIDTH = screenWidth / 2.5;
+      const CARD_HEIGHT = CARD_WIDTH * 1.5;
+      const SKELETON_ITEMS = Array.from({ length: 6 });
+      const DEFAULT_MAX_ITEMS = 10;
+    `);
+    expect(out).not.toMatch(/CARD_WIDTH\["data-flotrace-src"\]/);
+    expect(out).not.toMatch(/CARD_HEIGHT\["data-flotrace-src"\]/);
+    expect(out).not.toMatch(/SKELETON_ITEMS\["data-flotrace-src"\]/);
+    expect(out).not.toMatch(/DEFAULT_MAX_ITEMS\["data-flotrace-src"\]/);
+  });
+
+  test('skips PascalCase const with an arithmetic init (BinaryExpression → primitive)', () => {
+    // PascalCase (has lowercase, so the name check passes) but the init is a
+    // BinaryExpression that yields a number — must not be tagged.
+    const out = transform('const Spacing = base * 2;');
+    expect(out).not.toMatch(/Spacing\["data-flotrace-src"\]/);
+  });
+
+  test('runtime typeof guard makes statically-unknowable inits crash-proof', () => {
+    // A PascalCase const whose init we CANNOT statically prove is a primitive
+    // (`Dimensions.get(...).width` is a MemberExpression → could be anything) is
+    // still tagged, but the emitted guard restricts the assignment to objects /
+    // functions, so when it resolves to a number at runtime the assignment is a
+    // no-op instead of a throw. This is the bulletproof safety net.
+    const out = transform("const CardWidth = Dimensions.get('window').width;");
+    expect(out).toMatch(/CardWidth\["data-flotrace-src"\]\s*=/);
+    expect(out).toMatch(/typeof CardWidth === "object"/);
+    expect(out).toMatch(/typeof CardWidth === "function"/);
+  });
+
+  test('emitted declaration tag is guarded by a typeof object/function check', () => {
+    // Locks in the crash fix for the common component case too: the assignment
+    // must be wrapped so it never runs against a primitive binding.
+    const out = transform('const HomeScreen = () => <View />;');
+    expect(out).toMatch(/typeof HomeScreen === "object"/);
+    expect(out).toMatch(/typeof HomeScreen === "function"/);
+  });
+
+  test('wraps the declaration tag in try/catch (consumer-agnostic, can never crash the host)', () => {
+    const out = transform('const HomeScreen = () => <View />;');
+    expect(out).toMatch(/try\s*\{/);
+    expect(out).toMatch(/catch\s*\(/);
+    expect(out).toMatch(/HomeScreen\["data-flotrace-src"\]\s*=/);
+  });
+
+  test('emitted tag does NOT throw on a frozen-object binding at runtime', () => {
+    // `Object.freeze({...})` is a CallExpression init → tagged, and typeof is
+    // "object" so the typeof guard passes — only the try/catch prevents the
+    // strict-mode "Cannot add property, object is not extensible" throw. This is
+    // the general guarantee the typeof guard ALONE does not provide (a common
+    // real-world pattern: `const Routes = Object.freeze({...})`).
+    const out = transform('const Routes = Object.freeze({ home: "/" });');
+    expect(out).toMatch(/Routes\["data-flotrace-src"\]\s*=/);
+    // Module output runs in strict mode; execute it and assert nothing escapes.
+    expect(() => new Function('"use strict";\n' + out)()).not.toThrow();
+  });
+
+  test('emitted tag does NOT throw when a PascalCase binding resolves to a primitive at runtime', () => {
+    // CallExpression init the static heuristics cannot reject; resolves to a number.
+    const out = transform('function compute() { return 160.8; }\nconst CardWidth = compute();');
+    expect(() => new Function('"use strict";\n' + out)()).not.toThrow();
   });
 
   test('skips node_modules files for declaration tagging too', () => {
