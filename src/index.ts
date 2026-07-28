@@ -147,6 +147,16 @@ export {
 // Serializer
 export { serializeValue, serializeProps, getChangedKeys } from './serializer';
 
+// Network request/response detail helpers (shared by web + native trackers)
+export {
+  parseQueryParams,
+  headersToRecord,
+  parseRawHeaders,
+  serializeRequestBody,
+  serializeResponseText,
+  isStreamingContentType,
+} from './networkDetail';
+
 // WebSocket client
 export {
   getWebSocketClient,

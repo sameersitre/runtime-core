@@ -831,13 +831,16 @@ export interface RuntimeDuplicateKeyMessage {
 // Network Request Tracking
 // ============================================================================
 
-/** Metadata for a single intercepted network request. Privacy-first: no bodies, no query params, no auth headers. */
+/**
+ * Full detail for a single intercepted network request — request params, headers,
+ * and bodies are captured raw so a call can be inspected end-to-end in the panel.
+ */
 export interface NetworkRequestEntry {
   /** Incrementing request ID */
   requestId: string;
   /** HTTP method (GET, POST, PUT, DELETE, PATCH, etc.) */
   method: string;
-  /** URL path only — query params stripped for privacy */
+  /** URL path (query string is captured separately in `queryParams`) */
   urlPath: string;
   /** URL host for endpoint grouping */
   urlHost: string;
@@ -869,6 +872,16 @@ export interface NetworkRequestEntry {
   errorMessage?: string;
   /** Timestamp (Date.now()) */
   timestamp: number;
+  /** Query params parsed from the request URL (raw). */
+  queryParams?: Record<string, string>;
+  /** Request headers (raw). */
+  requestHeaders?: Record<string, string>;
+  /** Response headers (raw). */
+  responseHeaders?: Record<string, string>;
+  /** Serialized request body — JSON object, form fields, or text. */
+  requestBody?: SerializedValue;
+  /** Serialized response body — arrives via a deferred upsert once read. */
+  responseBody?: SerializedValue;
 }
 
 /** Batched network request message sent to FloTrace server */
