@@ -56,9 +56,16 @@
     }
   },
   "devDependencies": {
+    "@babel/core": "^7.29.0",
+    "@babel/generator": "^7.29.0",
+    "@babel/parser": "^7.29.0",
+    "@babel/traverse": "^7.29.0",
+    "@babel/types": "^7.29.0",
+    "@types/react": "^18.3.0",
+    "jsdom": "^29.0.0",
     "tsup": "^8.0.0",
     "typescript": "^5.7.0",
-    "@types/react": "^18.3.0"
+    "vitest": "^4.1.0"
   },
   "keywords": [
     "react",
