@@ -704,7 +704,7 @@ export interface RuntimePropDrillingMessage {
 
 /**
  * State of a single useActionState / useOptimistic hook instance on a fiber.
- * Mirror of `ActionStateEntry` in flotrace-desktop's `shared/liveMessages.ts`
+ * Mirror of `ActionStateEntry` in `apps/desktop/src/shared/liveMessages.ts`
  * — keep the field set in sync.
  */
 export interface ActionStateEntry {
