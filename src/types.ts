@@ -628,14 +628,7 @@ export interface CascadeNode {
 }
 
 export type LanePriority =
-  | 'sync'
-  | 'discrete'
-  | 'continuous'
-  | 'default'
-  | 'transition'
-  | 'deferred'
-  | 'idle'
-  | 'offscreen';
+  'sync' | 'discrete' | 'continuous' | 'default' | 'transition' | 'deferred' | 'idle' | 'offscreen';
 
 export interface LaneInfo {
   priority: LanePriority;

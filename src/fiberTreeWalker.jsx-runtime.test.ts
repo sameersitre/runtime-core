@@ -189,8 +189,11 @@ describe('fiberTreeWalker — JSX runtime integration', () => {
       const componentFn = function HomeScreen() {
         return null;
       };
-      (componentFn as unknown as Record<string, unknown>)['data-flotrace-src'] =
-        JSON.stringify({ f: '/p/HomeScreen.tsx', l: 5, c: 1 });
+      (componentFn as unknown as Record<string, unknown>)['data-flotrace-src'] = JSON.stringify({
+        f: '/p/HomeScreen.tsx',
+        l: 5,
+        c: 1,
+      });
 
       const fiber = createFiber({
         memoizedProps: null,
@@ -209,8 +212,11 @@ describe('fiberTreeWalker — JSX runtime integration', () => {
       const componentFn = function HomeScreen() {
         return null;
       };
-      (componentFn as unknown as Record<string, unknown>)['data-flotrace-src'] =
-        JSON.stringify({ f: '/p/HomeScreen.tsx', l: 1, c: 1 });
+      (componentFn as unknown as Record<string, unknown>)['data-flotrace-src'] = JSON.stringify({
+        f: '/p/HomeScreen.tsx',
+        l: 1,
+        c: 1,
+      });
 
       const fiber = createFiber({
         memoizedProps: {
@@ -349,10 +355,9 @@ describe('fiberTreeWalker — JSX runtime integration', () => {
       // normalizeStackFramePath strips the `file://` prefix so the desktop's
       // editor IPC receives a plain absolute path — no special-casing needed
       // downstream.
-      const stack = [
-        'Error',
-        '    at Component (file:///Users/me/app/src/Foo.tsx:42:8)',
-      ].join('\n');
+      const stack = ['Error', '    at Component (file:///Users/me/app/src/Foo.tsx:42:8)'].join(
+        '\n',
+      );
       expect(parseFirstNonReactFrame(stack)).toEqual({
         fileName: '/Users/me/app/src/Foo.tsx',
         lineNumber: 42,
@@ -527,8 +532,7 @@ describe('fiberTreeWalker — JSX runtime integration', () => {
         tag: 0,
         type: fn as unknown as Fiber['type'],
         _debugStack: {
-          stack:
-            'Error\nApp@http://10.0.2.2:8081/index.bundle?platform=android&dev=true:1234:56',
+          stack: 'Error\nApp@http://10.0.2.2:8081/index.bundle?platform=android&dev=true:1234:56',
         },
       });
       const [node] = walkFiber(fiber);
@@ -580,13 +584,21 @@ function buildTaggedComponentType(filePath: string): unknown {
 
 describe('isUserComponent — babel-plugin declaration-site signal (Route A)', () => {
   test.each([
-    ['function ref tagged with user path', buildTaggedComponentType('/abs/project/src/Foo.tsx'), true],
+    [
+      'function ref tagged with user path',
+      buildTaggedComponentType('/abs/project/src/Foo.tsx'),
+      true,
+    ],
     [
       'function ref tagged with node_modules path',
       buildTaggedComponentType('/abs/project/node_modules/lib/Bar.js'),
       false,
     ],
-    ['function ref WITHOUT the tag (plugin missing or library code)', function Untagged() {}, false],
+    [
+      'function ref WITHOUT the tag (plugin missing or library code)',
+      function Untagged() {},
+      false,
+    ],
     ['host-component string type (e.g. "View")', 'View', false],
     ['null type (defensive)', null, false],
     ['undefined type (defensive)', undefined, false],
@@ -858,10 +870,7 @@ describe('isUserComponent — `_debugStack` path fallback (Route C, React 19+ we
   });
 
   test('returns true for a Next.js Turbopack [project]/ user path', () => {
-    const stack = [
-      'Error',
-      '    at HomePage ([project]/src/app/page.tsx:11:4)',
-    ].join('\n');
+    const stack = ['Error', '    at HomePage ([project]/src/app/page.tsx:11:4)'].join('\n');
     expect(
       isUserComponent({
         type: function HomePage() {},
@@ -963,9 +972,9 @@ describe('walker short-circuits via Routes B + C (no babel plugin, web only)', (
         stack: 'Error\n    at Provider (webpack-internal:///./src/Provider.tsx:1:1)',
       },
     });
-    expect(
-      resolveSourceConfidence(fiber, /* isFramework */ true, /* isLibrary */ false),
-    ).toBe('exact');
+    expect(resolveSourceConfidence(fiber, /* isFramework */ true, /* isLibrary */ false)).toBe(
+      'exact',
+    );
   });
 
   test('React 18 + Babel scenario: _debugSource + framework name collision → exact via Route B', () => {
@@ -978,9 +987,9 @@ describe('walker short-circuits via Routes B + C (no babel plugin, web only)', (
       memoizedProps: null,
       _debugSource: { fileName: '/abs/project/src/Modal.tsx', lineNumber: 1 },
     });
-    expect(
-      resolveSourceConfidence(fiber, /* isFramework */ true, /* isLibrary */ false),
-    ).toBe('exact');
+    expect(resolveSourceConfidence(fiber, /* isFramework */ true, /* isLibrary */ false)).toBe(
+      'exact',
+    );
   });
 
   test('no-signal fallback: untagged type + no _debugSource + no _debugStack + isFramework=true → "package"', () => {
@@ -991,8 +1000,8 @@ describe('walker short-circuits via Routes B + C (no babel plugin, web only)', (
       type: function Anon() {} as Fiber['type'],
       memoizedProps: null,
     });
-    expect(
-      resolveSourceConfidence(fiber, /* isFramework */ true, /* isLibrary */ false),
-    ).toBe('package');
+    expect(resolveSourceConfidence(fiber, /* isFramework */ true, /* isLibrary */ false)).toBe(
+      'package',
+    );
   });
 });

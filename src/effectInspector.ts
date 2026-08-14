@@ -71,7 +71,7 @@ export function inspectEffects(fiber: Fiber): EffectInfo[] {
         willRun,
         hasCleanup,
       });
-    } catch (error) {
+    } catch {
       results.push({
         index: i,
         hookIndex: -1,

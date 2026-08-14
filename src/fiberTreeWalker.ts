@@ -1086,7 +1086,7 @@ export function resolveEffectiveReactKey(fiber: Fiber): string | undefined {
 // Test-only escape hatch — same pattern as `__setWalkerFilterConfigForTesting`.
 // Not re-exported from `index.ts`. Lets unit tests exercise Suspense / Offscreen
 // propagation and field assignment without spinning up React + DOM.
-// eslint-disable-next-line @typescript-eslint/no-use-before-define
+
 export const __walkFiberForTesting = (
   fiber: Fiber | null,
   parentId = 'root',
@@ -1193,9 +1193,7 @@ function walkFiber(
         const needsStackFallback =
           (jsxSource?.fileName ?? current._debugSource?.fileName) === undefined ||
           (jsxSource?.lineNumber ?? current._debugSource?.lineNumber) === undefined;
-        const stackLocation = needsStackFallback
-          ? resolveEffectiveSourceLocation(current)
-          : null;
+        const stackLocation = needsStackFallback ? resolveEffectiveSourceLocation(current) : null;
 
         const node: LiveTreeNode = {
           id: nodeId,
@@ -1208,9 +1206,7 @@ function walkFiber(
           filePath:
             jsxSource?.fileName ?? current._debugSource?.fileName ?? stackLocation?.fileName,
           lineNumber:
-            jsxSource?.lineNumber ??
-            current._debugSource?.lineNumber ??
-            stackLocation?.lineNumber,
+            jsxSource?.lineNumber ?? current._debugSource?.lineNumber ?? stackLocation?.lineNumber,
           isFramework: framework,
           reactKey: resolveEffectiveReactKey(current),
           queryHashes,
@@ -1607,7 +1603,7 @@ function executeSnapshot(root: FiberRoot): void {
     // Schedule prop drilling analysis — debounced to 2s, runs in background after each snapshot
     schedulePropDrillingAnalysis(tree, fiberRefMap, client);
     // Scan for useActionState / useOptimistic changes — best-effort, non-blocking
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
     scanActionStateChanges(fiberRefMap as Map<string, any>, client);
     // Emit Next.js context once on first snapshot if Next.js is detected
     maybeEmitNextjsContext(client);

@@ -97,10 +97,7 @@ export function scanActionStateChanges(
       );
       if (prevActionStateMap.get(nodeId) === snapshot) continue;
       // FIFO-evict the oldest tracked nodeId when at capacity (only on a genuinely new key).
-      if (
-        !prevActionStateMap.has(nodeId) &&
-        prevActionStateMap.size >= MAX_TRACKED_ACTION_STATE
-      ) {
+      if (!prevActionStateMap.has(nodeId) && prevActionStateMap.size >= MAX_TRACKED_ACTION_STATE) {
         const oldest = prevActionStateMap.keys().next().value;
         if (oldest !== undefined) prevActionStateMap.delete(oldest);
       }

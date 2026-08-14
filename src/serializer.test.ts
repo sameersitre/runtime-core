@@ -32,7 +32,6 @@ describe('serializer', () => {
     });
   });
 
-
   describe('serializeProps', () => {
     test('serializes ordinary user props through to the wire', () => {
       const result = serializeProps({ title: 'hello', count: 3, active: true });

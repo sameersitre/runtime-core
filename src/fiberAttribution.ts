@@ -52,14 +52,12 @@ export function getCurrentRenderingFiber(): FiberLike | null {
 
     // React 18: __SECRET_INTERNALS...ReactCurrentOwner.current
     const secret = win.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED as
-      | { ReactCurrentOwner?: { current: FiberLike | null } }
-      | undefined;
+      { ReactCurrentOwner?: { current: FiberLike | null } } | undefined;
     if (secret?.ReactCurrentOwner?.current) return secret.ReactCurrentOwner.current;
 
     // React 19: renamed + flattened — try known property names
     const client = win.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE as
-      | Record<string, unknown>
-      | undefined;
+      Record<string, unknown> | undefined;
     if (client) {
       // React 19 stores the current owner in a top-level property.
       // Walk all values looking for something that looks like a fiber.

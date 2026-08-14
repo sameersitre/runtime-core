@@ -78,9 +78,8 @@ const treeRecords: TreeRecord[] = [];
 // (instead of per-call `globalThis as DebugGlobal` casts) means every reader/
 // writer sees the same type and adding a new field is a one-line change.
 declare global {
-  // eslint-disable-next-line no-var
   var __FT_DEBUG: boolean | undefined;
-  // eslint-disable-next-line no-var
+
   var __ft: FtConsoleApi | undefined;
 }
 
@@ -95,7 +94,6 @@ function isRecording(): boolean {
 export function setFiberDebug(enabled: boolean): void {
   globalThis.__FT_DEBUG = enabled;
   if (enabled) {
-    // eslint-disable-next-line no-console
     console.info(
       '%c[FT debug]%c recording started — call %c__ft.dump()%c to view, %c__ft.clear()%c to reset, %c__ft.download()%c to export',
       'background:#1e293b;color:#7dd3fc;padding:1px 6px;border-radius:3px;font-weight:600;',
@@ -377,19 +375,18 @@ function installConsoleApi(): void {
         },
       ];
 
-      // eslint-disable-next-line no-console
       console.groupCollapsed(
         `%c[FT debug] dump%c — ${fiberRecords.size} components, ${totalFiberEvents} events, ${treeRecords.length} snapshots`,
         'background:#1e293b;color:#7dd3fc;padding:1px 6px;border-radius:3px;font-weight:600;',
         'color:#94a3b8;',
       );
-      // eslint-disable-next-line no-console
+
       console.log('Summary:');
-      // eslint-disable-next-line no-console
+
       console.table(summary, ['metric', 'value']);
-      // eslint-disable-next-line no-console
+
       console.log('Fibers — every observed component (sorted by call count):');
-      // eslint-disable-next-line no-console
+
       console.table(fiberRows, [
         'name',
         'rawName',
@@ -406,9 +403,9 @@ function installConsoleApi(): void {
         'lastSeenAt',
         'lastAgoSec',
       ]);
-      // eslint-disable-next-line no-console
+
       console.log('Tree snapshots — newest last:');
-      // eslint-disable-next-line no-console
+
       console.table(snapRows, [
         'ts',
         'ctx',
@@ -418,11 +415,10 @@ function installConsoleApi(): void {
         'minifiedLike',
         'topNames',
       ]);
-      // eslint-disable-next-line no-console
+
       console.groupEnd();
     },
     fibers() {
-      // eslint-disable-next-line no-console
       console.table(serializeFiberRecords(), [
         'name',
         'rawName',
@@ -441,17 +437,15 @@ function installConsoleApi(): void {
       ]);
     },
     snapshots() {
-      // eslint-disable-next-line no-console
       console.table(serializeTreeRecords());
     },
     tail(n = 20) {
-      // eslint-disable-next-line no-console
       console.table(treeRecords.slice(-n));
     },
     clear() {
       fiberRecords.clear();
       treeRecords.length = 0;
-      // eslint-disable-next-line no-console
+
       console.info('[FT debug] cleared');
     },
     size() {
@@ -467,11 +461,10 @@ function installConsoleApi(): void {
       const docRef = (globalThis as { document?: Document }).document;
       const URLRef = (globalThis as { URL?: typeof URL }).URL;
       if (!docRef || !URLRef || typeof URLRef.createObjectURL !== 'function') {
-        // eslint-disable-next-line no-console
         console.warn(
           '[FT debug] download() requires a browser environment — printing JSON instead',
         );
-        // eslint-disable-next-line no-console
+
         console.log(json);
         return;
       }

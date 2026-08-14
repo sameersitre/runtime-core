@@ -52,7 +52,7 @@ export function inspectHooks(fiber: Fiber): HookInfo[] {
       ) {
         effectIndex++;
       }
-    } catch (error) {
+    } catch {
       hooks.push({ index, type: 'unknown', value: { __type: 'truncated', originalType: 'error' } });
     }
 

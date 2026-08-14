@@ -31,12 +31,8 @@ import { readJsxSourceFromFiber } from './jsxRuntimeUtils';
 // `@babel/generator` and `@babel/traverse` ship as default exports — but
 // some bundlers wrap them in `{default: fn}`. Normalize so `.call(...)`
 // works regardless of which shape the runtime sees.
-const gen: typeof generate =
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (generate as any).default ?? generate;
-const tr: typeof traverse =
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (traverse as any).default ?? traverse;
+const gen: typeof generate = (generate as any).default ?? generate;
+const tr: typeof traverse = (traverse as any).default ?? traverse;
 
 function transform(
   code: string,
@@ -71,12 +67,10 @@ function transform(
     const fn = visitorMap[nodeType];
     if (typeof fn !== 'function') continue;
     wrappedVisitor[nodeType] = (path: unknown) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       fn(path as any, state);
     };
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   tr(ast, wrappedVisitor as any);
 
   return gen(ast).code;
@@ -131,11 +125,10 @@ function transformAndExtract(
     const fn = visitorMap[nodeType];
     if (typeof fn !== 'function') continue;
     wrappedVisitor[nodeType] = (path: unknown) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       fn(path as any, state);
     };
   }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   tr(ast, wrappedVisitor as any);
   return extractPayloadFromAst(ast);
 }

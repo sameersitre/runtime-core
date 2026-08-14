@@ -202,9 +202,7 @@ module.exports = function flotraceSourceAttributionPlugin({ types: t }) {
     );
     const guardedAssign = t.ifStatement(
       guard,
-      t.expressionStatement(
-        t.assignmentExpression('=', memberAccess, t.stringLiteral(payload)),
-      ),
+      t.expressionStatement(t.assignmentExpression('=', memberAccess, t.stringLiteral(payload))),
     );
     // Explicit catch binding (not optional-catch) for maximum engine
     // compatibility — older Hermes / Metro targets predate ES2019.
@@ -256,9 +254,7 @@ module.exports = function flotraceSourceAttributionPlugin({ types: t }) {
     // identifier. Babel can re-visit the path after other plugins mutate the
     // program (and the plugin runs again on already-transformed output).
     const siblings =
-      path.parentPath && path.parentPath.get('body')
-        ? [].concat(path.parentPath.get('body'))
-        : [];
+      path.parentPath && path.parentPath.get('body') ? [].concat(path.parentPath.get('body')) : [];
     for (let i = 0; i < siblings.length; i++) {
       if (isExistingDeclTag(siblings[i].node, name)) return false;
     }
@@ -342,8 +338,7 @@ module.exports = function flotraceSourceAttributionPlugin({ types: t }) {
         // statement so it's evaluated at module-eval time (function decls
         // are hoisted, so the identifier is defined by then).
         const target =
-          path.parentPath.isExportDefaultDeclaration() ||
-          path.parentPath.isExportNamedDeclaration()
+          path.parentPath.isExportDefaultDeclaration() || path.parentPath.isExportNamedDeclaration()
             ? path.parentPath
             : path;
         const payload = buildPayload(filename, path.node.loc);
@@ -356,8 +351,7 @@ module.exports = function flotraceSourceAttributionPlugin({ types: t }) {
         const filename = shouldVisit(state, path.node.loc);
         if (!filename) return;
         const target =
-          path.parentPath.isExportDefaultDeclaration() ||
-          path.parentPath.isExportNamedDeclaration()
+          path.parentPath.isExportDefaultDeclaration() || path.parentPath.isExportNamedDeclaration()
             ? path.parentPath
             : path;
         const payload = buildPayload(filename, path.node.loc);

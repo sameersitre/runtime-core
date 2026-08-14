@@ -328,7 +328,6 @@ function findFetchOriginUpKeyPath(
     const rid = findFetchOrigin(value, { ignoreTTL: true });
     if (rid) {
       if (isDebugEnabled()) {
-        // eslint-disable-next-line no-console
         console.debug('[FloTrace] origin via keyPath retreat', {
           keyPath,
           depthHit: i,
