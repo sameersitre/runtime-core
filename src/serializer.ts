@@ -129,7 +129,12 @@ export function serializeValue(
       return value.toISOString();
     }
 
-    // Handle Error
+    // Handle Error.
+    //
+    // NOTE: `stack` is deliberately dropped here. serializeValue runs on every
+    // props payload and store snapshot, and an Error nested in props would
+    // otherwise add kilobytes to a message sent many times a second. The error
+    // TRACKER wants the stack, so it uses `serializeError()` below instead.
     if (value instanceof Error) {
       return {
         name: value.name,
@@ -254,4 +259,50 @@ export function getChangedKeys(
   }
 
   return changed;
+}
+
+/** Max characters of a stack we transmit. Deep async stacks can run to tens of KB. */
+export const MAX_STACK_LENGTH = 4000;
+
+/** An error, with the stack preserved — unlike `serializeValue`. */
+export interface SerializedError {
+  name: string;
+  message: string;
+  stack?: string;
+  /** React's component stack, when the error came from an error boundary. */
+  componentStack?: string;
+}
+
+/**
+ * Serialize a thrown value for the error tracker.
+ *
+ * Separate from `serializeValue` on purpose: this one keeps the stack, which is
+ * the single most useful field for a runtime error and the single most wasteful
+ * one to include in high-frequency props/state payloads.
+ *
+ * Accepts `unknown` because `window.onerror` and unhandled rejections can carry
+ * any value at all — strings, objects, `undefined`.
+ */
+export function serializeError(value: unknown, componentStack?: string): SerializedError {
+  if (value instanceof Error) {
+    return {
+      name: value.name,
+      message: value.message,
+      ...(value.stack ? { stack: value.stack.slice(0, MAX_STACK_LENGTH) } : {}),
+      ...(componentStack ? { componentStack: componentStack.slice(0, MAX_STACK_LENGTH) } : {}),
+    };
+  }
+
+  // Non-Error throws: `throw 'boom'`, a rejected promise with a plain object, etc.
+  let message: string;
+  try {
+    message = typeof value === 'string' ? value : (JSON.stringify(value) ?? String(value));
+  } catch {
+    message = String(value);
+  }
+  return {
+    name: 'NonError',
+    message: message.slice(0, MAX_STACK_LENGTH),
+    ...(componentStack ? { componentStack: componentStack.slice(0, MAX_STACK_LENGTH) } : {}),
+  };
 }

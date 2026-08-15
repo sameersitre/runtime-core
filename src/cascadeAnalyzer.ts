@@ -20,6 +20,7 @@ import type { CascadeRecord, CascadeNode, CascadeReason, TriggerRecord } from '.
 import { readJsxSourceFromFiber, FLOTRACE_SRC_ATTR } from './jsxRuntimeUtils';
 import { classifyLanes, getFinishedLanes } from './laneDetector';
 import { getFiberDisplayName } from './fiberUtils';
+import { nowEpochMs } from './timeOrigin';
 
 // React fiber flags — from ReactFiberFlags.js (React 18)
 const PerformedWork = 0b0000000000000000000000000000001;
@@ -403,7 +404,7 @@ export function analyzeCascade(
 
     return {
       commitId: nextCommitId(),
-      timestamp: performance.now(),
+      timestamp: nowEpochMs(),
       totalDuration,
       totalComponents,
       avoidableCount,

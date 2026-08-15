@@ -16,6 +16,7 @@
 import type { TriggerRecord, StackFrame } from './types';
 import { serializeValue } from './serializer';
 import { getFiberDisplayName } from './fiberUtils';
+import { nowEpochMs } from './timeOrigin';
 
 // Ring buffer — max 200 entries, oldest discarded on overflow
 const MAX_TRIGGERS = 200;
@@ -203,7 +204,7 @@ function wrapFunctionComponentDispatchers(fiber: FiberMinimal): void {
                 hookIndex: capturedHookIndex,
                 hookType,
                 stack,
-                timestamp: performance.now(),
+                timestamp: nowEpochMs(),
                 action: serializeValue(action, 2),
                 batchId: nextBatchId(),
               };
@@ -250,7 +251,7 @@ function wrapClassComponentInstance(fiber: FiberMinimal): void {
           hookIndex: 0,
           hookType: 'setState',
           stack,
-          timestamp: performance.now(),
+          timestamp: nowEpochMs(),
           action: serializeValue(updater, 2),
           batchId: nextBatchId(),
         });
@@ -273,7 +274,7 @@ function wrapClassComponentInstance(fiber: FiberMinimal): void {
           hookIndex: 0,
           hookType: 'forceUpdate',
           stack,
-          timestamp: performance.now(),
+          timestamp: nowEpochMs(),
           action: null,
           batchId: nextBatchId(),
         });

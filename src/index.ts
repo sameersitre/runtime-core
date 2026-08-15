@@ -83,6 +83,10 @@ export type {
   // JSX runtime (Milestone 8 Phase 4)
   RuntimeCallSiteMetricsMessage,
   RuntimeDuplicateKeyMessage,
+  RuntimeErrorEventMessage,
+  RuntimeErrorKind,
+  RuntimeWebVitalMessage,
+  RuntimeWebVitalKind,
 } from './types';
 
 // Value Lineage resolver
@@ -145,7 +149,13 @@ export {
 } from './timelineTracker';
 
 // Serializer
-export { serializeValue, serializeProps, getChangedKeys } from './serializer';
+export { serializeValue, serializeProps, getChangedKeys, serializeError } from './serializer';
+export type { SerializedError } from './serializer';
+
+// Epoch-comparable high-resolution clock. Every wire timestamp must use this so
+// cascades/triggers are comparable with network and error events for route
+// attribution — see timeOrigin.ts.
+export { nowEpochMs } from './timeOrigin';
 
 // Network request/response detail helpers (shared by web + native trackers)
 export {

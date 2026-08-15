@@ -83,6 +83,8 @@ export type RuntimeMessage =
   // JSX runtime (Milestone 8 Phase 4)
   | RuntimeCallSiteMetricsMessage
   | RuntimeDuplicateKeyMessage
+  | RuntimeErrorEventMessage
+  | RuntimeWebVitalMessage
   | RuntimeNetworkRequestMessage
   | RuntimeLocalStateCorrelationMessage
   | RuntimeValueTraceMessage
@@ -184,6 +186,12 @@ export interface RuntimeRouterUpdateMessage {
   params: Record<string, string>;
   searchParams: Record<string, string>;
   timestamp: number;
+  /**
+   * Epoch ms when the navigation was observed, stamped BEFORE the router
+   * tracker's 200ms debounce so the desktop can bucket findings into accurate
+   * route windows. Optional so older desktops ignore it harmlessly.
+   */
+  navigationStartedAt?: number;
 }
 
 export interface RuntimeContextUpdateMessage {
@@ -1010,6 +1018,20 @@ export interface RuntimeValueTraceMessage {
  */
 export type ExtensionToRuntimeMessage =
   | { type: 'ext:ping' }
+  /**
+   * Desktop capability handshake, sent once per connection as the FIRST frame.
+   *
+   * The runtime and the desktop are versioned independently — users `npm
+   * update @flotrace/runtime` without touching the installed app — so a newer
+   * runtime must not blindly emit message types an older desktop cannot parse.
+   * Desktop builds before this handshake existed simply never send it, and the
+   * runtime treats that silence as "legacy desktop, send only the classic
+   * message set". See `sendGated` in `websocketClient.ts`.
+   *
+   * Carries the capability list and nothing else — deliberately no version
+   * string, so neither side can fall back to semver sniffing.
+   */
+  | { type: 'ext:hello'; supports: string[] }
   | { type: 'ext:startTracking'; options?: TrackingOptions }
   | { type: 'ext:stopTracking' }
   | { type: 'ext:requestState'; componentName?: string }
@@ -1085,6 +1107,16 @@ export interface FloTraceConfig {
   trackRedux?: boolean;
   /** Track React Router (default: true) */
   trackRouter?: boolean;
+  /**
+   * Patch `console.error` to capture React's own warnings — hydration
+   * mismatches, duplicate keys, update-loop warnings (default: **false**).
+   *
+   * Off by default deliberately. Even filtered to a React-warning whitelist,
+   * patching console is intrusive; apps log tokens, emails and payloads, and a
+   * chatty dev build produces a lot of noise. Uncaught errors and unhandled
+   * rejections are captured WITHOUT this flag.
+   */
+  trackConsoleErrors?: boolean;
   /** Track Context (default: true) */
   trackContext?: boolean;
   /** Track TanStack Query (default: true) */
@@ -1206,7 +1238,71 @@ export const DEFAULT_CONFIG: ResolvedFloTraceConfig = {
   trackZustand: true,
   trackRedux: true,
   trackRouter: true,
+  // Off by default — see the field docs on FloTraceConfig.
+  trackConsoleErrors: false,
   trackContext: true,
   trackTanstackQuery: true,
   getAppUrl: undefined,
 };
+
+// ============================================================================
+// Live Analysis — error + responsiveness capture (runtime >= 2.5.0)
+// ============================================================================
+
+/** What produced an error event. Drives severity and the Finding kind. */
+export type RuntimeErrorKind =
+  'error' | 'unhandledrejection' | 'react-warning' | 'hydration-mismatch';
+
+/**
+ * A captured runtime error.
+ *
+ * Deduplicated at the source by `(message, first stack frame)`: a render loop
+ * throwing the same TypeError 500 times is one finding, not 500. `count` carries
+ * the multiplicity so severity can still reflect it.
+ */
+export interface RuntimeErrorEventMessage {
+  type: 'runtime:errorEvent';
+  kind: RuntimeErrorKind;
+  name: string;
+  message: string;
+  /** Truncated to 4000 chars by `serializeError`. */
+  stack?: string;
+  componentStack?: string;
+  /** Best-effort component attribution; absent when the error escaped a render. */
+  componentName?: string;
+  /** Occurrences of this exact error since the page loaded. */
+  count: number;
+  firstSeenAt: number;
+  timestamp: number;
+}
+
+/** Which responsiveness signal this is. */
+export type RuntimeWebVitalKind = 'interaction' | 'longtask';
+
+/**
+ * One slow interaction (INP candidate) or long task.
+ *
+ * Deliberately NOT a full web-vitals integration: LCP and CLS are page-load
+ * concerns Lighthouse already covers for free. What no RUM tool can do — and
+ * what this exists for — is line a slow interaction up against the React commit
+ * that caused it. That correlation happens on the desktop, not here.
+ */
+export interface RuntimeWebVitalMessage {
+  type: 'runtime:webVital';
+  kind: RuntimeWebVitalKind;
+  /** Event name for interactions (`click`, `keydown`), `longtask` otherwise. */
+  name: string;
+  /** Epoch ms — comparable with cascade timestamps for attribution. */
+  startTime: number;
+  duration: number;
+  /** Interactions only: when the handler ran, for cascade overlap matching. */
+  processingStart?: number;
+  processingEnd?: number;
+  /**
+   * Target tag name and test id ONLY. Never a CSS selector — an id like
+   * `#user-email-jane@example.com` would exfiltrate user content.
+   */
+  targetTag?: string;
+  targetTestId?: string;
+  timestamp: number;
+}

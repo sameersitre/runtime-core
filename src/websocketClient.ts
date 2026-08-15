@@ -27,6 +27,19 @@ export class FloTraceWebSocketClient {
   private static readonly MAX_RECONNECT_INTERVAL = 30_000; // 30s cap
   private static readonly BATCH_FLUSH_MS = 100; // Flush batched messages every 100ms
   private static readonly MAX_QUEUE_SIZE = 500; // Prevent unbounded queue growth when disconnected
+  /**
+   * What the connected desktop says it can parse, or `null` while unknown.
+   *
+   * `null` -> handshake still pending, gated messages buffer.
+   * empty set -> legacy desktop (never sent `ext:hello`), gated messages drop.
+   */
+  private desktopSupports: Set<string> | null = null;
+  private gatedQueue: RuntimeMessage[] = [];
+  private helloTimeout: ReturnType<typeof setTimeout> | null = null;
+  /** How long to wait for `ext:hello` before concluding the desktop is legacy. */
+  private static readonly HELLO_GRACE_MS = 2_000;
+  /** Cap on messages held while the handshake is pending. */
+  private static readonly MAX_GATED_QUEUE = 25;
   private messageHandlers: Set<MessageHandler> = new Set();
   private connectionHandlers: Set<ConnectionHandler> = new Set();
 
@@ -73,6 +86,11 @@ export class FloTraceWebSocketClient {
         this.isConnecting = false;
         this.reconnectAttempts = 0; // Reset budget on successful connection
         console.log('[FloTrace] Connected to VS Code extension');
+        // Re-negotiate on every connection: a reconnect may have landed on a
+        // different desktop build (the user can relaunch or upgrade the app
+        // while the page stays open).
+        this.resetDesktopHandshake();
+        this.startHelloGrace();
         this.notifyConnectionChange(true);
 
         // Send ready message
@@ -112,6 +130,7 @@ export class FloTraceWebSocketClient {
         this.isConnecting = false;
         this.ws = null;
         console.log('[FloTrace] Disconnected from VS Code extension');
+        this.resetDesktopHandshake();
         this.notifyConnectionChange(false);
 
         // Attempt to reconnect
@@ -158,6 +177,10 @@ export class FloTraceWebSocketClient {
       this.flushTimeout = null;
     }
 
+    // Clears the hello grace timer too, so an explicit disconnect leaves no
+    // pending timeout behind (HMR teardown calls this on every hot update).
+    this.resetDesktopHandshake();
+
     if (this.ws) {
       try {
         this.send({ type: 'runtime:disconnect', reason: 'Client disconnect' });
@@ -195,6 +218,76 @@ export class FloTraceWebSocketClient {
     if (this.messageQueue.length >= (this.config.trackAllRenders ? 50 : 10)) {
       this.flush();
     }
+  }
+
+  /**
+   * Send a message only if the connected desktop can parse it.
+   *
+   * Older desktop builds validate an inbound frame with nothing more than a
+   * `type.startsWith('runtime:')` check and then run an exhaustive switch whose
+   * `default` THROWS — out of the `ws` message handler, with no
+   * `uncaughtException` handler behind it. Emitting a message type they predate
+   * therefore kills their main process. Since the runtime is upgraded via npm
+   * independently of the app, that pairing is entirely normal.
+   *
+   * While the handshake is outstanding the message is buffered (bounded), so an
+   * error thrown during the very first render still arrives once a modern
+   * desktop identifies itself.
+   *
+   * The capability token IS the message type, so `ext:hello.supports` is simply
+   * the list of `runtime:*` types the desktop's switch has a `case` for.
+   */
+  sendGated(message: RuntimeMessage): void {
+    if (!this.config.enabled) return;
+
+    if (this.desktopSupports === null) {
+      this.gatedQueue.push(message);
+      if (this.gatedQueue.length > FloTraceWebSocketClient.MAX_GATED_QUEUE) {
+        this.gatedQueue.shift();
+      }
+      return;
+    }
+
+    if (this.desktopSupports.has(message.type)) this.send(message);
+  }
+
+  /** Apply the desktop's advertised capabilities and release anything buffered. */
+  private applyDesktopHello(supports: string[]): void {
+    if (this.helloTimeout) {
+      clearTimeout(this.helloTimeout);
+      this.helloTimeout = null;
+    }
+    this.desktopSupports = new Set(supports);
+
+    const pending = this.gatedQueue;
+    this.gatedQueue = [];
+    for (const message of pending) {
+      // Re-check per message: the queue can hold several gated types and the
+      // desktop may support only some of them.
+      if (this.desktopSupports.has(message.type)) this.send(message);
+    }
+  }
+
+  /** Reset handshake state so a reconnect re-negotiates (the app may have been relaunched). */
+  private resetDesktopHandshake(): void {
+    if (this.helloTimeout) {
+      clearTimeout(this.helloTimeout);
+      this.helloTimeout = null;
+    }
+    this.desktopSupports = null;
+    this.gatedQueue = [];
+  }
+
+  /** Start the grace window after which an un-announced desktop is treated as legacy. */
+  private startHelloGrace(): void {
+    if (this.helloTimeout) clearTimeout(this.helloTimeout);
+    this.helloTimeout = setTimeout(() => {
+      this.helloTimeout = null;
+      if (this.desktopSupports === null) {
+        this.desktopSupports = new Set();
+        this.gatedQueue = [];
+      }
+    }, FloTraceWebSocketClient.HELLO_GRACE_MS);
   }
 
   /**
@@ -281,6 +374,11 @@ export class FloTraceWebSocketClient {
     // latency being tight.
     if (message.type === 'ext:ping') {
       this.sendImmediate({ type: 'runtime:pong', timestamp: Date.now() });
+      return;
+    }
+
+    if (message.type === 'ext:hello') {
+      this.applyDesktopHello(Array.isArray(message.supports) ? message.supports : []);
       return;
     }
 
