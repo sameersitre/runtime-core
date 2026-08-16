@@ -74,7 +74,14 @@ export interface JsxSourceArg {
 export function normalizeJsxSourcePath(fileName: string): string {
   let p = fileName;
   if (p.startsWith('file://')) p = p.slice('file://'.length);
-  if (p.startsWith('webpack-internal:///./')) p = p.slice('webpack-internal:///./'.length);
+  // React 19 prefixes frames for server-rendered elements.
+  p = p.replace(/^about:\/\/React\/Server\//, '');
+  // Webpack dev URLs. Next.js App Router inserts a LAYER MARKER before the
+  // path — `webpack-internal:///(app-pages-browser)/./src/App.tsx`, also
+  // `(rsc)` and `(ssr)` — which the old literal `webpack-internal:///./`
+  // prefix could not strip, leaving every App Router path un-normalized and
+  // unusable for click-to-IDE.
+  p = p.replace(/^webpack-internal:\/\/\/(\([^)]*\)\/)?/, '');
   // Next.js Turbopack emits `[project]/path/to/Foo.tsx` for project-relative
   // paths. Strip the prefix so the result is a plain project-relative path
   // matching what other bundlers produce — click-to-IDE in the desktop can
@@ -159,8 +166,16 @@ export function parseFirstNonReactFrame(
 ): { fileName: string; lineNumber: number; columnNumber: number } | null {
   const lines = stack.split('\n');
   for (const line of lines) {
-    // V8: "(path:line:col)"; Hermes: "@path:line:col"
-    const parened = line.match(/\(([^)]+):(\d+):(\d+)\)/);
+    // V8: "(path:line:col)"; Hermes: "@path:line:col".
+    //
+    // The path is matched GREEDILY up to the last "(" and anchored on the
+    // ":line:col)" tail. A lazy `[^)]+` looks equivalent and is not: Next.js
+    // dev frames embed a webpack layer marker inside the path —
+    // `(webpack-internal:///(app-pages-browser)/./src/App.tsx:10:5)` — and
+    // `[^)]+` terminates on the ")" of "(app-pages-browser)", so the whole
+    // frame failed to match and EVERY Next.js + SWC stack parsed as null.
+    // That is why the `_debugStack` route never fired on App Router apps.
+    const parened = line.match(/\((.+):(\d+):(\d+)\)\s*$/);
     const hermes = line.match(/@([^\s]+):(\d+):(\d+)$/);
     const match = parened ?? hermes;
     if (!match) continue;
@@ -169,6 +184,13 @@ export function parseFirstNonReactFrame(
     if (path.includes('react-native/Libraries')) continue;
     if (path.includes('/react/cjs/')) continue;
     if (path.includes('/scheduler/')) continue;
+    // Not covered by the `react-dom` test above — "react-dom" is not a
+    // substring of "react-server-dom-webpack". Next.js routes every App
+    // Router element through it, so without this the first frame of a
+    // server-owned element is the flight runtime rather than real code.
+    if (path.includes('react-server-dom-webpack')) continue;
+    if (path.includes('react-jsx-runtime')) continue;
+    if (path.includes('react-jsx-dev-runtime')) continue;
     // RN Metro / Webpack bundle frames are not openable in an IDE — the path
     // is a dev-server URL and the line number is bundle-relative, not
     // source-relative. Skip and keep looking (in practice no source frame
@@ -183,6 +205,93 @@ export function parseFirstNonReactFrame(
     };
   }
   return null;
+}
+
+/**
+ * Fiber shape `resolveDefinitionSitePath` needs. Structural on purpose so the
+ * full `Fiber` type and test doubles both satisfy it.
+ */
+interface DefinitionSiteFiber {
+  type?: unknown;
+  alternate?: DefinitionSiteFiber | null;
+  child?: DefinitionSiteFiber | null;
+  sibling?: DefinitionSiteFiber | null;
+  _debugOwner?: DefinitionSiteFiber | null;
+  _debugStack?: { stack?: string } | null;
+}
+
+/** Immediate children scanned before giving up. Bounds a pathological fan-out. */
+const MAX_CHILDREN_SCANNED = 8;
+
+/**
+ * Cached per component TYPE, not per fiber: one resolution per component
+ * *definition* for the life of the page, rather than per instance per render.
+ * Only successes are cached — a component that has not yet rendered a child
+ * (a closed dialog, a `return null`) stays resolvable the first time it does.
+ */
+let definitionSiteCache = new WeakMap<object, string>();
+
+/**
+ * The file a component is DEFINED in — the signal that separates the user's
+ * code from their dependencies without reading a single byte of source.
+ *
+ * React 19 hangs a captured `Error` off every element as `_debugStack`. Its
+ * first non-React frame is the file of whoever CREATED that element — the
+ * owner. So a component's own `_debugStack` points at its *caller*, not at
+ * itself, which is exactly the wrong end: `<Download/>` written in `Hero.tsx`
+ * resolves to `Hero.tsx` and would declare a lucide icon to be user code.
+ *
+ * Inverting it is what works. A stack captured while THIS component was
+ * rendering names THIS component's file, and those are the stacks on the
+ * elements it created. So: scan the immediate children, keep only the ones
+ * this fiber actually owns (`_debugOwner`), and read the frame from there.
+ *
+ * The ownership test is load-bearing, not a formality. A pass-through wrapper
+ * (`<Ctx.Provider>{children}</Ctx.Provider>`) has children it did not create;
+ * attributing their frames to the wrapper marks framework wrappers as user
+ * code. Measured against a real Next.js 15 App Router tree, dropping the test
+ * flipped `LayoutRouterContext` to "user" and inventing a `child.child` descent
+ * to chase recall flipped `TemplateContext` too.
+ *
+ * Returns `null` when nothing is provable — never a guess. Callers fall back
+ * to the existing name heuristics, so an unknown costs the status quo.
+ */
+export function resolveDefinitionSitePath(fiber: DefinitionSiteFiber): string | null {
+  const type = fiber.type;
+  const key =
+    typeof type === 'function' || (typeof type === 'object' && type !== null)
+      ? (type as object)
+      : null;
+
+  if (key) {
+    const cached = definitionSiteCache.get(key);
+    if (cached !== undefined) return cached;
+  }
+
+  let child = fiber.child ?? null;
+  for (let i = 0; child && i < MAX_CHILDREN_SCANNED; i++, child = child.sibling ?? null) {
+    const owner = child._debugOwner;
+    // `alternate` because React double-buffers fibers: the owner recorded at
+    // element-creation time may be the previous-commit twin of this fiber.
+    if (owner == null || (owner !== fiber && owner !== fiber.alternate)) continue;
+
+    const stack = child._debugStack?.stack;
+    if (typeof stack !== 'string') continue;
+
+    const frame = parseFirstNonReactFrame(stack);
+    if (!frame) continue;
+
+    if (key) definitionSiteCache.set(key, frame.fileName);
+    return frame.fileName;
+  }
+
+  return null;
+}
+
+/** Test-only: the cache is module-global and would leak across cases. */
+export function __resetDefinitionSiteCacheForTesting(): void {
+  // A WeakMap has no clear(); rebinding is the cheap equivalent.
+  definitionSiteCache = new WeakMap<object, string>();
 }
 
 /**
@@ -399,6 +508,9 @@ export function isUserComponent(fiber: {
   memoizedProps?: Record<string, unknown> | null;
   _debugSource?: { fileName: string; lineNumber?: number } | null;
   _debugStack?: { stack?: string } | null;
+  alternate?: DefinitionSiteFiber | null;
+  child?: DefinitionSiteFiber | null;
+  _debugOwner?: DefinitionSiteFiber | null;
 }): boolean {
   // Memoize by fiber reference. Every caller passes a fiber-like OBJECT; the guard only
   // protects against a hypothetical primitive arg (WeakMap keys must be objects).
@@ -415,6 +527,9 @@ function computeIsUserComponent(fiber: {
   memoizedProps?: Record<string, unknown> | null;
   _debugSource?: { fileName: string; lineNumber?: number } | null;
   _debugStack?: { stack?: string } | null;
+  alternate?: DefinitionSiteFiber | null;
+  child?: DefinitionSiteFiber | null;
+  _debugOwner?: DefinitionSiteFiber | null;
 }): boolean {
   // Routes 1-3 — JSX-runtime opt-in symbol on memoizedProps, babel-plugin
   // string attr on memoizedProps, and babel-plugin string attr on fiber.type.
@@ -436,16 +551,20 @@ function computeIsUserComponent(fiber: {
     return true;
   }
 
-  // Route C — React 19's `_debugStack` (the fallback signal when neither
-  // the JSX-runtime opt-in nor the babel plugin is installed, e.g. plain
-  // Vite + React 19 with no config changes). `parseFirstNonReactFrame`
-  // skips React internals AND JS bundle URLs (so RN Metro bundle frames
-  // don't false-positive a user path), then normalizes the result.
-  const stack = fiber._debugStack?.stack;
-  if (typeof stack === 'string') {
-    const frame = parseFirstNonReactFrame(stack);
-    if (frame && !frame.fileName.includes('node_modules')) return true;
-  }
+  // Route C — React 19's `_debugStack`, the fallback when neither the
+  // JSX-runtime opt-in nor the babel plugin is installed (Next.js + SWC,
+  // plain Vite + React 19).
+  //
+  // This reads the DEFINITION site, not the fiber's own stack. Its own stack
+  // names the caller: for `<Download/>` written in `Hero.tsx` it yields
+  // `Hero.tsx`, which is outside node_modules, so the old form returned `true`
+  // and positively asserted every lucide icon to be user code — then
+  // `isFrameworkComponent` short-circuits on that, disabling every downstream
+  // heuristic. It was inert only because the frame regex could not parse
+  // Next.js paths at all; repairing that regex alone would have made
+  // classification strictly worse.
+  const definitionPath = resolveDefinitionSitePath(fiber);
+  if (definitionPath) return !definitionPath.includes('node_modules');
 
   return false;
 }

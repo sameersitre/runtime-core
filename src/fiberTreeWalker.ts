@@ -26,6 +26,7 @@ import {
   readJsxSourceFromFiber,
   isUserComponent,
   parseFirstNonReactFrame,
+  resolveDefinitionSitePath,
   FLOTRACE_SRC_ATTR,
   type FlotraceJsxSource,
 } from './jsxRuntimeUtils';
@@ -859,10 +860,12 @@ function isFrameworkComponent(fiber: Fiber, name: string): boolean {
     // since some bundlers legitimately omit all source metadata).
   }
 
-  // Library code is published pre-transpiled, so `_debugSource` is usually only
-  // present on user JSX — path-based detection here is a best-effort safety net,
-  // not the primary strategy. Name-based detection above is the reliable path.
-  const filePath = fiber._debugSource?.fileName;
+  // Path-based detection. `_debugSource` only exists under Babel, so on
+  // Next.js + SWC (React 19) it is always absent — which is why the name list
+  // was carrying the whole load and every framework internal it did not
+  // enumerate leaked through as user code. `resolveDefinitionSitePath` fills
+  // that gap from `_debugStack` and needs no bundler configuration.
+  const filePath = fiber._debugSource?.fileName ?? resolveDefinitionSitePath(fiber);
   if (filePath) {
     for (const pattern of walkerFilterConfig.frameworkPathPatterns) {
       if (pattern.test(filePath)) return true;
@@ -935,7 +938,31 @@ function detectLibraryName(fiber: Fiber, name: string): string | undefined {
   // Next.js uses SWC by default which does NOT inject _debugSource into fibers —
   // absence of _debugSource is not a reliable signal across all bundlers.
   const known = KNOWN_LIBRARY_NAMES.get(name);
-  return known;
+  if (known) return known;
+
+  // PRESENCE of a node_modules definition path, on the other hand, is decisive.
+  // This is what finally names the long tail no hand-maintained list can cover:
+  // every `lucide-react` icon, `framer-motion`'s `motion.*`, and any other
+  // dependency rendering components into the user's tree.
+  const definitionPath = fiber._debugSource?.fileName ?? resolveDefinitionSitePath(fiber);
+  return definitionPath ? packageNameFromPath(definitionPath) : undefined;
+}
+
+/**
+ * `…/node_modules/lucide-react/dist/esm/Icon.js` → `lucide-react`
+ * `…/node_modules/@radix-ui/react-dialog/dist/index.js` → `@radix-ui/react-dialog`
+ *
+ * Reads the LAST `node_modules` segment so a nested dependency reports itself
+ * rather than the package that hoisted it.
+ */
+function packageNameFromPath(filePath: string): string | undefined {
+  const marker = 'node_modules/';
+  const at = filePath.replace(/\\/g, '/').lastIndexOf(marker);
+  if (at === -1) return undefined;
+  const rest = filePath.replace(/\\/g, '/').slice(at + marker.length);
+  const parts = rest.split('/').filter(Boolean);
+  if (parts.length === 0) return undefined;
+  return parts[0].startsWith('@') && parts.length > 1 ? `${parts[0]}/${parts[1]}` : parts[0];
 }
 
 /**

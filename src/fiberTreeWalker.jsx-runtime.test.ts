@@ -28,6 +28,8 @@ import {
   FLOTRACE_SOURCE,
   FLOTRACE_SRC_ATTR,
   isUserComponent,
+  resolveDefinitionSitePath,
+  __resetDefinitionSiteCacheForTesting,
   type FlotraceJsxSource,
 } from './jsxRuntimeUtils';
 
@@ -347,6 +349,58 @@ describe('fiberTreeWalker — JSX runtime integration', () => {
     test('returns null when nothing resolves', () => {
       const fiber = createFiber();
       expect(resolveEffectiveSourcePath(fiber)).toBeNull();
+    });
+  });
+
+  describe('parseFirstNonReactFrame — real Next.js 15 App Router frames', () => {
+    // Captured verbatim from a live Next.js 15.3 + React 19 canary + SWC dev
+    // session. Every one of these parsed as `null` before the path regex was
+    // fixed, which is why the `_debugStack` route never fired on App Router.
+    test.each([
+      {
+        label: 'a dependency, behind the (app-pages-browser) layer marker',
+        line: '    at User (webpack-internal:///(app-pages-browser)/../../node_modules/lucide-react/dist/esm/createLucideIcon.js:20:82)',
+        fileName: '../../node_modules/lucide-react/dist/esm/createLucideIcon.js',
+        lineNumber: 20,
+        columnNumber: 82,
+      },
+      {
+        label: 'user code, behind the same marker',
+        line: '    at UserMenu (webpack-internal:///(app-pages-browser)/./src/components/auth/UserMenu.tsx:173:88)',
+        fileName: 'src/components/auth/UserMenu.tsx',
+        lineNumber: 173,
+        columnNumber: 88,
+      },
+    ])('parses $label', ({ line, fileName, lineNumber, columnNumber }) => {
+      expect(parseFirstNonReactFrame(['Error', line].join('\n'))).toEqual({
+        fileName,
+        lineNumber,
+        columnNumber,
+      });
+    });
+
+    test.each([
+      {
+        label: 'the flight runtime — "react-dom" is not a substring of "react-server-dom-webpack"',
+        line: '    at fakeJSXCallSite (webpack-internal:///(app-pages-browser)/../../node_modules/next/dist/compiled/react-server-dom-webpack/cjs/react-server-dom-webpack-client.browser.development.js:1:1)',
+      },
+      {
+        label: 'the dev JSX runtime',
+        line: '    at exports.jsxDEV (webpack-internal:///(app-pages-browser)/../../node_modules/next/dist/compiled/react/cjs/react-jsx-dev-runtime.development.js:321:13)',
+      },
+    ])('skips $label', ({ line }) => {
+      expect(parseFirstNonReactFrame(['Error', line].join('\n'))).toBeNull();
+    });
+
+    test('returns the first real frame past the React internals', () => {
+      // The shape every element actually has: React frames, then the owner.
+      const stack = [
+        'Error',
+        '    at exports.jsxDEV (webpack-internal:///(app-pages-browser)/../../node_modules/next/dist/compiled/react/cjs/react-jsx-dev-runtime.development.js:321:13)',
+        '    at Hero (webpack-internal:///(app-pages-browser)/./src/components/marketing/Hero.tsx:126:11)',
+        '    at renderWithHooks (webpack-internal:///(app-pages-browser)/../../node_modules/next/dist/compiled/react-dom/cjs/react-dom-client.development.js:1:1)',
+      ].join('\n');
+      expect(parseFirstNonReactFrame(stack)?.fileName).toBe('src/components/marketing/Hero.tsx');
     });
   });
 
@@ -850,101 +904,213 @@ describe('isUserComponent — `_debugSource` path fallback (Route B, React 18 + 
   });
 });
 
-describe('isUserComponent — `_debugStack` path fallback (Route C, React 19+ web / Next.js SWC)', () => {
-  // Next.js SWC builds, Vite + React 19, and any web dev setup that doesn't
-  // run Babel — the only source signal React emits is `_debugStack`, an
-  // Error whose stack frames contain dev-server URLs. Route C parses those.
+describe('resolveDefinitionSitePath', () => {
+  beforeEach(() => __resetDefinitionSiteCacheForTesting());
 
-  test('returns true for a Next.js webpack-internal user path', () => {
-    // Typical Next.js Pages Router (Webpack dev) stack frame format.
-    const stack = [
-      'Error',
-      '    at HomePage (webpack-internal:///./src/pages/index.tsx:42:7)',
-    ].join('\n');
+  const stackFor = (path: string) => ['Error', `    at Comp (${path}:1:1)`].join('\n');
+
+  function fiberWithOwnedChild(path: string | null) {
+    const type = { displayName: 'Comp' };
+    const fiber: Record<string, unknown> = { type, alternate: null };
+    if (path !== null) {
+      fiber.child = {
+        _debugOwner: fiber,
+        _debugStack: { stack: stackFor(path) },
+        sibling: null,
+        child: null,
+      };
+    }
+    return fiber as Parameters<typeof resolveDefinitionSitePath>[0];
+  }
+
+  test('returns the normalized definition path', () => {
     expect(
-      isUserComponent({
-        type: function HomePage() {},
-        _debugStack: { stack },
-      }),
-    ).toBe(true);
+      resolveDefinitionSitePath(
+        fiberWithOwnedChild('webpack-internal:///(app-pages-browser)/./src/Hero.tsx'),
+      ),
+    ).toBe('src/Hero.tsx');
   });
 
-  test('returns true for a Next.js Turbopack [project]/ user path', () => {
-    const stack = ['Error', '    at HomePage ([project]/src/app/page.tsx:11:4)'].join('\n');
-    expect(
-      isUserComponent({
-        type: function HomePage() {},
-        _debugStack: { stack },
-      }),
-    ).toBe(true);
+  test('caches by component TYPE, so later instances resolve without a child', () => {
+    // The cache is what makes this affordable: one stack parse per component
+    // definition for the life of the page, not one per instance per render.
+    const type = { displayName: 'Shared' };
+    const resolved: Record<string, unknown> = { type, alternate: null };
+    resolved.child = {
+      _debugOwner: resolved,
+      _debugStack: { stack: stackFor('webpack-internal:///./node_modules/pkg/x.js') },
+      sibling: null,
+      child: null,
+    };
+    expect(resolveDefinitionSitePath(resolved as never)).toContain('node_modules/pkg');
+
+    // A second instance of the SAME component with nothing to read from.
+    const childless = { type, alternate: null } as never;
+    expect(resolveDefinitionSitePath(childless)).toContain('node_modules/pkg');
   });
 
-  test('returns true for a Vite http://localhost user path', () => {
-    const stack = [
-      'Error',
-      '    at App (http://localhost:5173/src/App.tsx?t=1700000000000:11:4)',
-    ].join('\n');
-    expect(
-      isUserComponent({
-        type: function App() {},
-        _debugStack: { stack },
-      }),
-    ).toBe(true);
+  test('does not cache a failure — a later render can still resolve it', () => {
+    // A closed dialog or a `return null` renders no child yet. Caching that as
+    // "unknown" would make it permanently unclassifiable.
+    const type = { displayName: 'Dialog' };
+    expect(resolveDefinitionSitePath({ type, alternate: null } as never)).toBeNull();
+
+    const opened: Record<string, unknown> = { type, alternate: null };
+    opened.child = {
+      _debugOwner: opened,
+      _debugStack: { stack: stackFor('webpack-internal:///./src/Dialog.tsx') },
+      sibling: null,
+      child: null,
+    };
+    expect(resolveDefinitionSitePath(opened as never)).toBe('src/Dialog.tsx');
   });
 
-  test('returns false when _debugStack only contains node_modules frames', () => {
-    const stack = [
-      'Error',
-      '    at LibButton (webpack-internal:///./node_modules/some-lib/dist/Button.js:1:1)',
-    ].join('\n');
-    expect(
-      isUserComponent({
-        type: function LibButton() {},
-        _debugStack: { stack },
-      }),
-    ).toBe(false);
+  test('returns null for a fiber with no type to key on', () => {
+    expect(resolveDefinitionSitePath({ type: undefined, alternate: null } as never)).toBeNull();
+  });
+});
+
+describe('isUserComponent — definition-site fallback (Route C, React 19+ web / Next.js SWC)', () => {
+  // Next.js SWC, Vite + React 19, and any web dev setup that doesn't run Babel:
+  // the only source signal React emits is `_debugStack`, an Error whose frames
+  // carry dev-server URLs.
+  //
+  // Route C reads the DEFINITION site, which is not the fiber's own stack. A
+  // fiber's own stack was captured by whoever CREATED it, so it names the
+  // caller: `<Download/>` written in Hero.tsx yields Hero.tsx and would declare
+  // a lucide icon to be user code. The frames that name a component's own file
+  // are the ones on the elements IT created — its owned children.
+
+  /** A fiber whose owned child carries `stack`, i.e. defined at that path. */
+  function fiberDefinedBy(stack: string, name = 'Component') {
+    const fiber: Record<string, unknown> = { type: { displayName: name }, alternate: null };
+    fiber.child = { _debugOwner: fiber, _debugStack: { stack }, sibling: null, child: null };
+    return fiber as Parameters<typeof isUserComponent>[0];
+  }
+
+  const frame = (fn: string, path: string) => ['Error', `    at ${fn} (${path}:42:7)`].join('\n');
+
+  beforeEach(() => __resetDefinitionSiteCacheForTesting());
+
+  test.each([
+    {
+      label: 'Next.js App Router webpack-internal, layer marker in the path',
+      // The `(app-pages-browser)` marker is why this whole route was dead: a
+      // `[^)]+` path match terminated on its closing paren.
+      path: 'webpack-internal:///(app-pages-browser)/./src/components/Hero.tsx',
+    },
+    { label: 'Next.js webpack-internal', path: 'webpack-internal:///./src/pages/index.tsx' },
+    { label: 'Next.js Turbopack', path: '[project]/src/app/page.tsx' },
+    { label: 'Vite dev server', path: 'http://localhost:5173/src/App.tsx?t=1700000000000' },
+  ])('resolves $label as user code', ({ path }) => {
+    expect(isUserComponent(fiberDefinedBy(frame('Hero', path)))).toBe(true);
   });
 
-  test('returns false when _debugStack only contains a Metro bundle URL (RN dev)', () => {
-    // RN scenario: Hermes stack frames are bundle URLs only. parseFirstNonReactFrame
-    // skips these via isJsBundlePath, so Route C yields null → fall through.
-    // This locks in the contract: RN dev without the babel plugin still won't
-    // give us a user-vs-framework signal via Route C (it must come from Route A).
-    const stack = [
-      'Error',
-      'App@http://10.0.2.2:8081/index.bundle?platform=android&dev=true:1234:56',
-    ].join('\n');
-    expect(
-      isUserComponent({
-        type: function App() {},
-        _debugStack: { stack },
-      }),
-    ).toBe(false);
+  test.each([
+    {
+      label: 'lucide-react',
+      path: 'webpack-internal:///(app-pages-browser)/../../node_modules/lucide-react/dist/esm/Icon.js',
+    },
+    {
+      label: 'a generic dependency',
+      path: 'webpack-internal:///./node_modules/some-lib/dist/Button.js',
+    },
+  ])('resolves $label as NOT user code', ({ path }) => {
+    expect(isUserComponent(fiberDefinedBy(frame('Icon', path)))).toBe(false);
   });
 
-  test('returns false when stack only has React internal frames', () => {
-    const stack = [
-      'Error',
-      '    at performWork (webpack-internal:///./node_modules/react-dom/cjs/react-dom.dev.js:1:1)',
-      '    at scheduleRoot (webpack-internal:///./node_modules/scheduler/cjs/scheduler.dev.js:2:2)',
-    ].join('\n');
-    expect(
-      isUserComponent({
-        type: function X() {},
-        _debugStack: { stack },
-      }),
-    ).toBe(false);
+  test('a component whose OWN stack points at a user file is not thereby user code', () => {
+    // The regression that made lucide icons unclassifiable. `Download` is
+    // defined in node_modules but written into Hero.tsx, so its own stack is a
+    // user path. Only the definition site may answer this.
+    const download: Record<string, unknown> = {
+      type: { displayName: 'Download' },
+      alternate: null,
+    };
+    download._debugStack = {
+      stack: frame('Hero', 'webpack-internal:///(app-pages-browser)/./src/components/Hero.tsx'),
+    };
+    download.child = {
+      _debugOwner: download,
+      _debugStack: {
+        stack: frame(
+          'Download',
+          'webpack-internal:///(app-pages-browser)/../../node_modules/lucide-react/dist/esm/createLucideIcon.js',
+        ),
+      },
+      sibling: null,
+      child: null,
+    };
+    expect(isUserComponent(download as Parameters<typeof isUserComponent>[0])).toBe(false);
   });
 
-  test('Route A still wins when both Routes A and C are present', () => {
-    const taggedType = buildTaggedComponentType('/abs/project/src/Tagged.tsx');
-    const stack = 'Error\n    at Tagged (webpack-internal:///./src/Tagged.tsx:1:1)';
-    expect(
-      isUserComponent({
-        type: taggedType,
-        _debugStack: { stack },
-      }),
-    ).toBe(true);
+  test('ignores a child this fiber does not own', () => {
+    // `<Ctx.Provider>{children}</Ctx.Provider>` — the child came from the
+    // caller. Attributing its frame to the wrapper marks framework wrappers as
+    // user code; measured against a real Next.js tree that flipped
+    // LayoutRouterContext and TemplateContext.
+    const wrapper: Record<string, unknown> = { type: { displayName: 'Provider' }, alternate: null };
+    wrapper.child = {
+      _debugOwner: { type: { displayName: 'SomeoneElse' } },
+      _debugStack: { stack: frame('SomeoneElse', 'webpack-internal:///./src/App.tsx') },
+      sibling: null,
+      child: null,
+    };
+    expect(isUserComponent(wrapper as Parameters<typeof isUserComponent>[0])).toBe(false);
+  });
+
+  test("accepts a child owned by this fiber's alternate (double-buffered fibers)", () => {
+    const alternate: Record<string, unknown> = { type: { displayName: 'Hero' } };
+    const fiber: Record<string, unknown> = { type: alternate.type, alternate };
+    fiber.child = {
+      _debugOwner: alternate,
+      _debugStack: { stack: frame('Hero', 'webpack-internal:///./src/Hero.tsx') },
+      sibling: null,
+      child: null,
+    };
+    expect(isUserComponent(fiber as Parameters<typeof isUserComponent>[0])).toBe(true);
+  });
+
+  test('scans siblings, not just the first child', () => {
+    const fiber: Record<string, unknown> = { type: { displayName: 'X' }, alternate: null };
+    fiber.child = {
+      _debugOwner: null, // unowned — skipped
+      _debugStack: { stack: frame('Other', 'webpack-internal:///./src/Other.tsx') },
+      child: null,
+      sibling: {
+        _debugOwner: fiber,
+        _debugStack: { stack: frame('X', 'webpack-internal:///./node_modules/pkg/x.js') },
+        sibling: null,
+        child: null,
+      },
+    };
+    expect(isUserComponent(fiber as Parameters<typeof isUserComponent>[0])).toBe(false);
+  });
+
+  test.each([
+    { label: 'no children at all (a `return null` component)', child: null },
+    {
+      label: 'only a Metro bundle URL (RN dev — parseFirstNonReactFrame skips it)',
+      child: 'App@http://10.0.2.2:8081/index.bundle?platform=android&dev=true:1234:56',
+    },
+    {
+      label: 'only React-internal frames',
+      child: [
+        'Error',
+        '    at x (webpack-internal:///./node_modules/react-dom/cjs/react-dom.dev.js:1:1)',
+        '    at y (webpack-internal:///./node_modules/scheduler/cjs/scheduler.dev.js:2:2)',
+      ].join('\n'),
+    },
+  ])('returns false — never a guess — when there is $label', ({ child }) => {
+    const fiber: Record<string, unknown> = { type: { displayName: 'X' }, alternate: null };
+    if (child)
+      fiber.child = {
+        _debugOwner: fiber,
+        _debugStack: { stack: child },
+        sibling: null,
+        child: null,
+      };
+    expect(isUserComponent(fiber as Parameters<typeof isUserComponent>[0])).toBe(false);
   });
 });
 
@@ -956,10 +1122,11 @@ describe('walker short-circuits via Routes B + C (no babel plugin, web only)', (
     __resetWalkerFilterConfigForTesting();
   });
 
-  test('Next.js scenario: user component with name colliding with framework list + Route C path → exact, not framework', () => {
-    // Reproduces the Next.js case the user flagged: no babel plugin, so
-    // Route A is absent. The only signal is _debugStack with a user path.
-    // Without Route C, this fiber would be hidden as framework.
+  test('Next.js scenario: user component whose name collides with the framework list → exact, not package', () => {
+    // No babel plugin, so Route A is absent; the only signal is the definition
+    // site recovered from an owned child's `_debugStack`. Without it this fiber
+    // is hidden as framework purely because it is called `Provider`.
+    __resetDefinitionSiteCacheForTesting();
     __setWalkerFilterConfigForTesting({
       frameworkNames: new Set(['Provider']),
     });
@@ -968,10 +1135,16 @@ describe('walker short-circuits via Routes B + C (no babel plugin, web only)', (
       tag: 0,
       type: componentFn as Fiber['type'],
       memoizedProps: null,
-      _debugStack: {
-        stack: 'Error\n    at Provider (webpack-internal:///./src/Provider.tsx:1:1)',
-      },
     });
+    (fiber as unknown as Record<string, unknown>).child = {
+      _debugOwner: fiber,
+      _debugStack: {
+        stack:
+          'Error\n    at Provider (webpack-internal:///(app-pages-browser)/./src/Provider.tsx:1:1)',
+      },
+      sibling: null,
+      child: null,
+    };
     expect(resolveSourceConfidence(fiber, /* isFramework */ true, /* isLibrary */ false)).toBe(
       'exact',
     );
