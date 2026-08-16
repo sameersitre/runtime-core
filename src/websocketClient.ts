@@ -7,6 +7,7 @@ import type {
 } from './types';
 import { DEFAULT_CONFIG } from './types';
 import { isJsxRuntimeActive } from './jsxRuntimeUtils';
+import { getCapabilities } from './capabilities';
 
 type MessageHandler = (message: ExtensionToRuntimeMessage) => void;
 type ConnectionHandler = (connected: boolean) => void;
@@ -106,6 +107,10 @@ export class FloTraceWebSocketClient {
           frameworkVersion: this.config.frameworkVersion,
           reactNativeVersion: this.config.reactNativeVersion,
           runtimeVersion: this.config.runtimeVersion,
+          // What this build can PRODUCE, so the desktop can say "requires
+          // @flotrace/runtime >= 2.5.0" instead of showing an empty category.
+          // Read here, not at import: reconnects re-send after trackers change.
+          capabilities: getCapabilities(),
           // P5: JSX runtime adoption signal — read at WS-open time so
           // multiple fibers have already rendered by the moment we report.
           // `isJsxRuntimeActive` reads `globalThis[Symbol.for('flotrace.jsx-runtime-active')]`,

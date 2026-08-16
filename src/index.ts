@@ -211,3 +211,6 @@ export {
   logTreeSnapshot,
   logTreeSummary,
 } from './fiberDebugLogger';
+
+export { registerCapability, unregisterCapability, getCapabilities } from './capabilities';
+export type { RuntimeCapability } from './capabilities';

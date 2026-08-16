@@ -1,3 +1,4 @@
+import type { RuntimeCapability } from './capabilities';
 /**
  * Types for @flotrace/runtime package
  * These mirror the shared types from the extension but are standalone
@@ -126,6 +127,13 @@ export interface RuntimeReadyMessage {
    * the admin dashboard can track rollout rate. No PII; one-time boolean.
    */
   jsxRuntimeActive?: boolean;
+  /**
+   * What this runtime build can PRODUCE (see capabilities.ts).
+   *
+   * Optional: runtimes older than 2.5.0 omit it, and the desktop must treat
+   * `undefined` as "unknown", not as "supports nothing".
+   */
+  capabilities?: RuntimeCapability[];
 }
 
 export interface RuntimeRenderMessage {
