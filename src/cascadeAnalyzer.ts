@@ -17,6 +17,7 @@
  */
 
 import type { CascadeRecord, CascadeNode, CascadeReason, TriggerRecord } from './types';
+import { isHmrInduced } from './hmrDetector';
 import { readJsxSourceFromFiber, FLOTRACE_SRC_ATTR } from './jsxRuntimeUtils';
 import { classifyLanes, getFinishedLanes } from './laneDetector';
 import { getFiberDisplayName } from './fiberUtils';
@@ -401,10 +402,11 @@ export function analyzeCascade(
 
     const totalDuration = rootCauses.reduce((sum, n) => sum + n.subtreeDuration, 0);
     const triggerIds = triggers.map((t) => t.triggerId);
+    const timestamp = nowEpochMs();
 
     return {
       commitId: nextCommitId(),
-      timestamp: nowEpochMs(),
+      timestamp,
       totalDuration,
       totalComponents,
       avoidableCount,
@@ -412,6 +414,10 @@ export function analyzeCascade(
       rootCauses,
       lane,
       triggerIds,
+      // Stamped, not dropped: the commit really happened and the cascade tree
+      // is still worth showing. Consumers decide whether to count it as a
+      // defect, and can say WHY it is excluded rather than silently omitting it.
+      ...(isHmrInduced(timestamp) ? { hmrInduced: true } : {}),
     };
   } catch {
     return null;

@@ -214,3 +214,4 @@ export {
 
 export { registerCapability, unregisterCapability, getCapabilities } from './capabilities';
 export type { RuntimeCapability } from './capabilities';
+export { installHmrDetector, uninstallHmrDetector, isHmrInduced } from './hmrDetector';

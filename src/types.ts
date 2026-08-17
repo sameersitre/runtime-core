@@ -663,6 +663,13 @@ export interface CascadeRecord {
   rootCauses: CascadeNode[];
   lane: LaneInfo;
   triggerIds: string[];
+  /**
+   * Commit landed inside a React Fast Refresh window. Every render in it looks
+   * ancestor-driven and 100% avoidable, but `React.memo` cannot prevent it —
+   * Fast Refresh swaps the module, so the component type changes and React must
+   * remount. Consumers exclude these from avoidable-render analysis.
+   */
+  hmrInduced?: boolean;
 }
 
 export interface RuntimeRenderTriggerMessage {
